@@ -1,0 +1,7 @@
+[package]
+name = "mieql"
+version = "0.1.0"
+authors = ["R. Miles McCain <0@rmrm.io>"]
+edition = "2018"
+
+[dependencies]
