@@ -15,16 +15,12 @@ use ieql::QueryGroup;
 
 use super::util;
 
-pub fn main(addr: SocketAddr) {
+pub fn main(addr: SocketAddr, debug: bool) {
     info!("running as master on `{}`...", addr);
-
+    if debug {
+        info!("running in debug mode!")
+    }
     let mut url_queue: VecDeque<String> = VecDeque::new();
-    url_queue.push_back(String::from("val 1"));
-    url_queue.push_back(String::from("val 2"));
-    url_queue.push_back(String::from("val 3"));
-    url_queue.push_back(String::from("val 4"));
-    url_queue.push_back(String::from("val 5"));
-    url_queue.push_back(String::from("val 6"));
     let url_queue = Arc::new(Mutex::new(url_queue));
     let (output_transmitter, output_receiver) = mpsc::channel::<OutputBatch>();
 
@@ -39,7 +35,11 @@ pub fn main(addr: SocketAddr) {
                 },
                 "/data" => {
                     info!("received data request");
-                    get_data(&mut *queue.lock().unwrap())
+                    if debug {
+                        get_debug_data()
+                    } else {
+                        get_data(&mut *queue.lock().unwrap())
+                    }
                 },
                 "/output" => {
                     info!("received output");
@@ -75,6 +75,10 @@ fn get_queries() -> Response<Body> {
         .status(200)
         .body(Body::from(response_str))
         .unwrap()
+}
+
+fn get_debug_data() -> Response<Body> {
+    Response::new(Body::from(String::from("crawl-data/CC-MAIN-2018-51/segments/1544376823009.19/warc/CC-MAIN-20181209185547-20181209211547-00000.warc.gz")))
 }
 
 fn get_data(queue: &mut VecDeque<String>) -> Response<Body> {
