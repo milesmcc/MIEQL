@@ -8,6 +8,10 @@ extern crate hyper;
 extern crate ron;
 extern crate simplelog;
 extern crate reqwest;
+extern crate rusoto_s3;
+extern crate flate2;
+extern crate warc_parser;
+extern crate nom;
 
 use std::net::SocketAddr;
 
@@ -40,7 +44,8 @@ fn main() {
         .subcommand(
             SubCommand::with_name("master")
                 .about("Act as the master")
-                .args_from_usage("-b, --bind=[bind address] 'The network address to bind to (0.0.0.0:3000 by default)'"),
+                .args_from_usage("-b, --bind=[bind address] 'The network address to bind to (0.0.0.0:3000 by default)'")
+                .args_from_usage("-d, --debug 'Always return a single url to be scanned'"),
         )
         .get_matches();
     run(matches);
@@ -58,7 +63,8 @@ fn run(matches: clap::ArgMatches) {
                 .unwrap_or("0.0.0.0:3000")
                 .parse()
                 .expect("invalid bind address provided");
-            master::main(bind_address);
+            let debug = m.is_present("debug");
+            master::main(bind_address, debug);
         }
         _ => error!("no valid command specified; try running with `--help`."),
     }
