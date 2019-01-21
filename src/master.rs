@@ -78,7 +78,7 @@ fn get_queries() -> Response<Body> {
 }
 
 fn get_debug_data() -> Response<Body> {
-    Response::new(Body::from(String::from("crawl-data/CC-MAIN-2018-51/segments/1544376823009.19/warc/CC-MAIN-20181209185547-20181209211547-00000.warc.gz")))
+    Response::new(Body::from(String::from("crawl-data/CC-MAIN-2018-51/segments/1544376823710.44/warc/CC-MAIN-20181212000955-20181212022455-00124.warc.gz")))
 }
 
 fn get_data(queue: &mut VecDeque<String>) -> Response<Body> {
