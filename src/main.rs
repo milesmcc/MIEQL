@@ -6,12 +6,13 @@ extern crate log;
 extern crate futures;
 extern crate hyper;
 extern crate ron;
-extern crate simplelog;
 extern crate reqwest;
 extern crate rusoto_s3;
 extern crate flate2;
 extern crate warc_parser;
 extern crate nom;
+extern crate httparse;
+extern crate env_logger;
 
 use std::net::SocketAddr;
 
@@ -25,12 +26,7 @@ mod master;
 mod util;
 
 fn main() {
-    simplelog::CombinedLogger::init(vec![simplelog::TermLogger::new(
-        simplelog::LevelFilter::Info,
-        simplelog::Config::default(),
-    )
-    .unwrap()])
-    .unwrap();
+    env_logger::init();
 
     let matches = App::new("MIEQL Command Line Interface")
         .version(crate_version!())
