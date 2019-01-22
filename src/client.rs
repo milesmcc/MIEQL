@@ -10,8 +10,10 @@ use rusoto_s3::S3;
 use std::io::Read;
 use std::sync::mpsc::channel;
 use std::time::SystemTime;
+use sys_info;
+use std::thread;
 
-pub fn main(master_url: String, threads: u8) {
+pub fn main(master_url: String, threads: u8, manage_memory: bool) {
     // Test connection
     let handshake_url = format!("{}/handshake", &master_url);
     let handshake_response = (match reqwest::get(handshake_url.as_str()) {
@@ -120,6 +122,22 @@ pub fn main(master_url: String, threads: u8) {
         let crlf = [13, 10, 13, 10]; // carraige return, line feed
         let mut current_document_batch: Vec<ieql::Document> = Vec::new();
         loop {
+            // Check if there is enough memory to scan a document
+            if manage_memory {
+                let mut info = match sys_info::mem_info() {
+                    Ok(value) => value,
+                    Err(error) => {
+                        error!("unable to read system memory info (`{}`); run with --maniac to ignore", error);
+                        return;
+                    }
+                };
+                while (info.free as f64) / (info.total as f64) > 0.9 { // 90% memory usage
+                    warn!("90% memory utilization reached; throttling for 1 second...");
+                    thread::park_timeout_ms(1000);
+                    info = sys_info::mem_info().unwrap();
+                } 
+            }
+
             // On-the-fly gzip decode loop
             // good network buffer size: 30K
             let mut buf = [0u8; 32768];

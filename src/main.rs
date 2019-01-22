@@ -13,6 +13,7 @@ extern crate warc_parser;
 extern crate nom;
 extern crate httparse;
 extern crate env_logger;
+extern crate sys_info;
 
 use std::net::SocketAddr;
 
@@ -36,7 +37,8 @@ fn main() {
             SubCommand::with_name("client")
                 .about("Act as the client")
                 .args_from_usage("-t, --threads=[# of threads] 'The number of threads to use (default 8)'")
-                .args_from_usage("-m, --master=[master url] 'The url of the master (default <http://0.0.0.0:3000>)'"),
+                .args_from_usage("-m, --master=[master url] 'The url of the master (default <http://0.0.0.0:3000>)'")
+                .args_from_usage("-M, --maniac 'Disable built in memory usage thresholds'")
         )
         .subcommand(
             SubCommand::with_name("master")
@@ -59,7 +61,8 @@ fn run(matches: clap::ArgMatches) {
                     return;
                 }
             };
-            client::main(String::from(master_url), threads);
+            let maniac = m.is_present("maniac");
+            client::main(String::from(master_url), threads, !maniac);
         }
         ("master", Some(m)) => {
             let bind_address: SocketAddr = m
