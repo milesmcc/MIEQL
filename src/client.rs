@@ -11,7 +11,7 @@ use std::io::Read;
 use std::sync::mpsc::channel;
 use std::time::SystemTime;
 
-pub fn main(master_url: String) {
+pub fn main(master_url: String, threads: u8) {
     // Test connection
     let handshake_url = format!("{}/handshake", &master_url);
     let handshake_response = (match reqwest::get(handshake_url.as_str()) {
@@ -68,7 +68,7 @@ pub fn main(master_url: String) {
     };
     let (document_sender, document_receiver) =
         channel::<ieql::input::document::DocumentReferenceBatch>();
-    let output_receiver: std::sync::mpsc::Receiver<ieql::output::output::OutputBatch> = compiled_queries.scan_concurrently(document_receiver, 8);
+    let output_receiver: std::sync::mpsc::Receiver<ieql::output::output::OutputBatch> = compiled_queries.scan_concurrently(document_receiver, threads);
 
     // Analytics
     let mut documents_processed = 0;

@@ -35,7 +35,8 @@ fn main() {
         .subcommand(
             SubCommand::with_name("client")
                 .about("Act as the client")
-                .args_from_usage("-m, --master=[master url] 'The url of the master (http://0.0.0.0:3000 by default)'"),
+                .args_from_usage("-t, --threads=[# of threads] 'The number of threads to use (default 8)'")
+                .args_from_usage("-m, --master=[master url] 'The url of the master (default <http://0.0.0.0:3000>)'"),
         )
         .subcommand(
             SubCommand::with_name("master")
@@ -51,7 +52,14 @@ fn run(matches: clap::ArgMatches) {
     match matches.subcommand() {
         ("client", Some(m)) => {
             let master_url = m.value_of("master").unwrap_or("http://0.0.0.0:3000");
-            client::main(String::from(master_url));
+            let threads: u8 = match m.value_of("threads").unwrap_or("8").parse() {
+                Ok(value) => value,
+                Err(error) => {
+                    error!("invalid number of threads `{}` (`{}`)!", m.value_of("threads").unwrap(), error);
+                    return;
+                }
+            };
+            client::main(String::from(master_url), threads);
         }
         ("master", Some(m)) => {
             let bind_address: SocketAddr = m
