@@ -134,7 +134,7 @@ pub fn main(master_url: String, threads: u8, manage_memory: bool) {
                 let memory_ratio = (info.free as f64) / (info.total as f64);
                 while memory_ratio < 0.1 { // 90% memory usage
                     warn!("90% memory utilization reached; throttling for 1 second...");
-                    thread::park_timeout_ms(1000);
+                    thread::sleep_ms(1000);
                     info = sys_info::mem_info().unwrap();
                 } 
             }
