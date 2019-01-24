@@ -191,6 +191,9 @@ pub fn main(master_url: String, threads: u8, queue_size: usize) {
             }
 
             if documents_processed % 512 == 0 {
+                let old_outputs = total_outputs;
+                total_outputs += scan_interface.outputs().len();
+                let delta_outputs = total_outputs - old_outputs;
                 let mut time_elapsed = SystemTime::now()
                     .duration_since(start_time)
                     .expect("time went backwards!")
@@ -200,10 +203,12 @@ pub fn main(master_url: String, threads: u8, queue_size: usize) {
                 }
                 let docs_per_second = documents_processed / time_elapsed;
                 info!(
-                    "[{} queued] [{} docs/second] [{} processed]",
+                    "[{} queued] [{} docs/second] [{} processed] [{} outputs, Δ{}]",
                     scan_interface.batches_pending_processing(),
                     docs_per_second,
-                    documents_processed
+                    documents_processed,
+                    total_outputs,
+                    delta_outputs
                 );
             }
         }
