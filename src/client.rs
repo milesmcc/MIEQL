@@ -14,7 +14,7 @@ use std::time::SystemTime;
 use sys_info;
 use std::time::Duration;
 
-pub fn main(master_url: String, threads: u8, queue_size: usize) {
+pub fn main(master_url: String, threads: u8, queue_size: usize, update_interval: u64) {
     // Test connection
     let handshake_url = format!("{}/handshake", &master_url);
     let handshake_response = (match reqwest::get(handshake_url.as_str()) {
@@ -72,7 +72,7 @@ pub fn main(master_url: String, threads: u8, queue_size: usize) {
     let scan_interface = compiled_queries.scan_concurrently(threads);
 
     // Analytics
-    let mut documents_processed = 0;
+    let mut documents_processed = 0u64;
     let mut total_outputs = 0;
     let mut start_time = SystemTime::now();
 
@@ -190,7 +190,7 @@ pub fn main(master_url: String, threads: u8, queue_size: usize) {
                 current_document_batch = Vec::new();
             }
 
-            if documents_processed % 512 == 0 {
+            if documents_processed % update_interval == 0 {
                 let old_outputs = total_outputs;
                 total_outputs += scan_interface.outputs().len();
                 let delta_outputs = total_outputs - old_outputs;

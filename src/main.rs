@@ -39,6 +39,7 @@ fn main() {
                 .args_from_usage("-t, --threads=[# of threads] 'The number of threads to use (default 8)'")
                 .args_from_usage("-m, --master=[master url] 'The url of the master (default <http://0.0.0.0:3000>)'")
                 .args_from_usage("-q, --queue=[max queue size] 'Maximum number of items in the queue at any given time (default 256)'")
+                .args_from_usage("-u, --update-interval=[update frequency] 'How frequently to log a status update, in terms of documents (default 512).")
         )
         .subcommand(
             SubCommand::with_name("master")
@@ -68,7 +69,14 @@ fn run(matches: clap::ArgMatches) {
                     return;
                 }
             };
-            client::main(String::from(master_url), threads, queue_size);
+            let update_interval: u64 = match m.value_of("update-interval").unwrap_or("512").parse() {
+                Ok(value) => value,
+                Err(error) => {
+                    error!("invalid update interval `{}` (`{}`)!", m.value_of("update-interval").unwrap(), error);
+                    return;
+                }
+            };
+            client::main(String::from(master_url), threads, queue_size, update_interval);
         }
         ("master", Some(m)) => {
             let bind_address: SocketAddr = m
