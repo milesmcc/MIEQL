@@ -9,11 +9,12 @@ use rusoto_s3;
 use rusoto_s3::S3;
 use std::io::Read;
 use std::sync::mpsc::channel;
+use std::thread;
 use std::time::SystemTime;
 use sys_info;
-use std::thread;
+use std::time::Duration;
 
-pub fn main(master_url: String, threads: u8, manage_memory: bool) {
+pub fn main(master_url: String, threads: u8, queue_size: usize) {
     // Test connection
     let handshake_url = format!("{}/handshake", &master_url);
     let handshake_response = (match reqwest::get(handshake_url.as_str()) {
@@ -68,9 +69,7 @@ pub fn main(master_url: String, threads: u8, manage_memory: bool) {
             return;
         }
     };
-    let (document_sender, document_receiver) =
-        channel::<ieql::input::document::DocumentReferenceBatch>();
-    let output_receiver: std::sync::mpsc::Receiver<ieql::output::output::OutputBatch> = compiled_queries.scan_concurrently(document_receiver, threads);
+    let scan_interface = compiled_queries.scan_concurrently(threads);
 
     // Analytics
     let mut documents_processed = 0;
@@ -122,21 +121,13 @@ pub fn main(master_url: String, threads: u8, manage_memory: bool) {
         let crlf = [13, 10, 13, 10]; // carraige return, line feed
         let mut current_document_batch: Vec<ieql::Document> = Vec::new();
         loop {
-            // Check if there is enough memory to scan a document
-            if manage_memory {
-                let mut info = match sys_info::mem_info() {
-                    Ok(value) => value,
-                    Err(error) => {
-                        error!("unable to read system memory info (`{}`); run with --maniac to ignore", error);
-                        return;
-                    }
-                };
-                let memory_ratio = (info.free as f64) / (info.total as f64);
-                while memory_ratio < 0.1 { // 90% memory usage
-                    warn!("90% memory utilization reached; throttling for 1 second...");
-                    thread::sleep_ms(1000);
-                    info = sys_info::mem_info().unwrap();
-                } 
+            // Check if queue size is too big
+            let currently_processing = scan_interface.batches_pending_processing();
+            let mut instances = 1;
+            while queue_size <= currently_processing {
+                warn!("maximum queue sized reached ({} > {}); sleeping for 1s... (#{})", currently_processing, queue_size, instances);
+                instances += 1;
+                thread::sleep(Duration::from_millis(1000));
             }
 
             // On-the-fly gzip decode loop
@@ -194,19 +185,25 @@ pub fn main(master_url: String, threads: u8, manage_memory: bool) {
             debug!("processing asynchronously: {:?}", document.url);
             current_document_batch.push(document);
             if current_document_batch.len() >= 64 {
-                document_sender.send(docs_to_doc_reference(current_document_batch));
+                scan_interface.process(docs_to_doc_reference(current_document_batch));
                 current_document_batch = Vec::new();
-                total_outputs += output_receiver.try_iter().count();
-                let mut time_elapsed = SystemTime::now().duration_since(start_time).expect("time went backwards!").as_secs();
+                let mut time_elapsed = SystemTime::now()
+                    .duration_since(start_time)
+                    .expect("time went backwards!")
+                    .as_secs();
                 if time_elapsed == 0 {
                     time_elapsed += 1; // for now...
                 }
                 let docs_per_second = documents_processed / time_elapsed;
-                info!("outputs: {} // avg docs/second: {}", total_outputs, docs_per_second); // remove this before prod
+                info!(
+                    "in queue: {} // avg docs/second: {}",
+                    scan_interface.batches_pending_processing(),
+                    docs_per_second
+                ); // remove this before prod
             }
         }
         // Send remaining documents
-        document_sender.send(docs_to_doc_reference(current_document_batch));
+        scan_interface.process(docs_to_doc_reference(current_document_batch));
     }
 }
 

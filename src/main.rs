@@ -38,7 +38,7 @@ fn main() {
                 .about("Act as the client")
                 .args_from_usage("-t, --threads=[# of threads] 'The number of threads to use (default 8)'")
                 .args_from_usage("-m, --master=[master url] 'The url of the master (default <http://0.0.0.0:3000>)'")
-                .args_from_usage("-M, --maniac 'Disable built in memory usage thresholds'")
+                .args_from_usage("-q, --queue=[max queue size] 'Maximum number of items in the queue at any given time (default 256)'")
         )
         .subcommand(
             SubCommand::with_name("master")
@@ -61,8 +61,14 @@ fn run(matches: clap::ArgMatches) {
                     return;
                 }
             };
-            let maniac = m.is_present("maniac");
-            client::main(String::from(master_url), threads, !maniac);
+            let queue_size: usize = match m.value_of("queue").unwrap_or("256").parse() {
+                Ok(value) => value,
+                Err(error) => {
+                    error!("invalid max queue size `{}` (`{}`)!", m.value_of("queue").unwrap(), error);
+                    return;
+                }
+            };
+            client::main(String::from(master_url), threads, queue_size);
         }
         ("master", Some(m)) => {
             let bind_address: SocketAddr = m
