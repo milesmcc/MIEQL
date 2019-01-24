@@ -192,7 +192,9 @@ pub fn main(master_url: String, threads: u8, queue_size: usize, update_interval:
 
             if documents_processed % update_interval == 0 {
                 let old_outputs = total_outputs;
-                total_outputs += scan_interface.outputs().len();
+                for output in scan_interface.outputs() {
+                    total_outputs += output.outputs.len();
+                }
                 let delta_outputs = total_outputs - old_outputs;
                 let mut time_elapsed = SystemTime::now()
                     .duration_since(start_time)
