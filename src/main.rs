@@ -45,7 +45,8 @@ fn main() {
             SubCommand::with_name("master")
                 .about("Act as the master")
                 .args_from_usage("-b, --bind=[bind address] 'The network address to bind to (0.0.0.0:3000 by default)'")
-                .args_from_usage("-d, --debug 'Always return a single url to be scanned'"),
+                .args_from_usage("-d, --debug 'Always return a single url to be scanned'")
+                .args_from_usage("-q, --query-debug=[# of queries] 'Always return a number of debug queries (default 16).")
         )
         .get_matches();
     run(matches);
@@ -84,8 +85,9 @@ fn run(matches: clap::ArgMatches) {
                 .unwrap_or("0.0.0.0:3000")
                 .parse()
                 .expect("invalid bind address provided");
+            let debug_queries: usize = m.value_of("query-debug").unwrap_or("16").parse().expect("invalid number");
             let debug = m.is_present("debug");
-            master::main(bind_address, debug);
+            master::main(bind_address, debug, debug_queries);
         }
         _ => error!("no valid command specified; try running with `--help`."),
     }

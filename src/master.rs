@@ -11,11 +11,11 @@ use std::sync::{Arc, Mutex};
 use ron;
 
 use ieql::output::output::OutputBatch;
-use ieql::QueryGroup;
+use ieql::{QueryGroup, Query};
 
 use super::util;
 
-pub fn main(addr: SocketAddr, debug: bool) {
+pub fn main(addr: SocketAddr, debug: bool, debug_queries: usize) {
     info!("running as master on `{}`...", addr);
     if debug {
         info!("running in debug mode!")
@@ -31,7 +31,7 @@ pub fn main(addr: SocketAddr, debug: bool) {
             service_fn_ok(move |req: Request<Body>| match req.uri().path() {
                 "/queries" => {
                     info!("received query request");
-                    get_queries()
+                    get_queries(debug_queries)
                 },
                 "/data" => {
                     info!("received data request");
@@ -66,10 +66,15 @@ pub fn main(addr: SocketAddr, debug: bool) {
     hyper::rt::run(server);
 }
 
-fn get_queries() -> Response<Body> {
+fn get_queries(debug_queries: usize) -> Response<Body> {
+    let mut query_vec: Vec<Query> = Vec::new();
+    for _ in 0..debug_queries {
+        query_vec.push(util::get_query());
+    }
     let queries = QueryGroup {
-        queries: vec![util::get_query()]
+        queries: query_vec
     }; // TODO: link to database
+
     let response_str = ron::ser::to_string(&queries).unwrap(); // data is from a trusted source
     Response::builder()
         .status(200)
