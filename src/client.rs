@@ -188,6 +188,9 @@ pub fn main(master_url: String, threads: u8, queue_size: usize) {
             if current_document_batch.len() >= 64 {
                 scan_interface.process(docs_to_doc_reference(current_document_batch));
                 current_document_batch = Vec::new();
+            }
+
+            if documents_processed % 512 == 0 {
                 let mut time_elapsed = SystemTime::now()
                     .duration_since(start_time)
                     .expect("time went backwards!")
@@ -197,10 +200,11 @@ pub fn main(master_url: String, threads: u8, queue_size: usize) {
                 }
                 let docs_per_second = documents_processed / time_elapsed;
                 info!(
-                    "in queue: {} // avg docs/second: {}",
+                    "[{} queued] [{} docs/second] [{} processed]",
                     scan_interface.batches_pending_processing(),
-                    docs_per_second
-                ); // remove this before prod
+                    docs_per_second,
+                    documents_processed
+                );
             }
         }
         // Send remaining documents
