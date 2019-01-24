@@ -125,7 +125,7 @@ pub fn main(master_url: String, threads: u8, queue_size: usize, update_interval:
             let mut currently_processing = scan_interface.batches_pending_processing();
             let mut instances = 1;
             while queue_size <= currently_processing {
-                warn!("maximum queue sized reached ({} > {}); sleeping for 1s... (#{})", currently_processing, queue_size, instances);
+                warn!("maximum queue sized reached ({} >= {}); sleeping for 1s... (#{})", currently_processing, queue_size, instances);
                 instances += 1;
                 thread::sleep(Duration::from_millis(1000));
                 currently_processing = scan_interface.batches_pending_processing();
