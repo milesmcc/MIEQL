@@ -50,6 +50,7 @@ fn main() {
                 .args_from_usage("-D, --debug 'Always return a single url to be scanned'")
                 .args_from_usage("-q, --query-debug=[# of queries] 'Always return a number of debug queries (default 16)")
                 .args_from_usage("-d, --database=[Postgres URL] 'The URL of the Postgres instance (default postgres://postgres@localhost:5432/mieql)'")
+                .args_from_usage("-r, --remove 'Remove the URLs pulled from the database (use in prod)'")
         )
         .get_matches();
     run(matches);
@@ -91,7 +92,8 @@ fn run(matches: clap::ArgMatches) {
             let debug_queries: usize = m.value_of("query-debug").unwrap_or("16").parse().expect("invalid number");
             let debug = m.is_present("debug");
             let database_url = m.value_of("database").unwrap_or("postgres://postgres:postgres@localhost:5432/mieql");
-            master::main(bind_address, debug, debug_queries, database_url);
+            let remove = m.is_present("remove");
+            master::main(bind_address, debug, debug_queries, database_url, remove);
         }
         _ => error!("no valid command specified; try running with `--help`."),
     }

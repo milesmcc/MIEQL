@@ -19,14 +19,12 @@ use ieql::{Query, QueryGroup};
 
 use super::util;
 
-pub fn main(addr: SocketAddr, debug: bool, debug_queries: usize, database_location: &str) {
+pub fn main(addr: SocketAddr, debug: bool, debug_queries: usize, database_location: &str, remove_urls: bool) {
     info!("running as master on `{}`...", addr);
     if debug {
         info!("running in debug mode!")
     }
     let mut url_queue: VecDeque<String> = VecDeque::new();
-    let url_queue = Arc::new(Mutex::new(url_queue));
-    let (output_transmitter, output_receiver) = mpsc::channel::<OutputBatch>();
 
     let conn = match Connection::connect(database_location, postgres::TlsMode::None) {
         Ok(value) => value,
@@ -39,10 +37,24 @@ pub fn main(addr: SocketAddr, debug: bool, debug_queries: usize, database_locati
         }
     }; // connection should be on localhost
 
+
     match verify_database(&conn) {
         true => info!("successfully validated database"),
         false => error!("database validation failed; make sure the following tables are available: `queries`, `outputs`, `inputs`")
     }
+
+    if !debug {
+        match pull_urls_from_db_and_remove(&conn, remove_urls) {
+            Some(value) => {
+                info!("loaded {} urls from the database", value.len());
+                url_queue.extend(value);
+            },
+            None => warn!("unable to read URLs from database (none provided)")
+        }
+    }
+
+    let url_queue = Arc::new(Mutex::new(url_queue));
+    let (output_transmitter, output_receiver) = mpsc::channel::<OutputBatch>();
 
     let queries: Arc<Mutex<Option<QueryGroup>>> = Arc::new(Mutex::new(match pull_queries_from_db(
         &conn,
@@ -60,11 +72,15 @@ pub fn main(addr: SocketAddr, debug: bool, debug_queries: usize, database_locati
         }
     }));
 
+    let queue = url_queue.clone();
+    let outputs = output_transmitter.clone();
+    let query_group = queries.clone();
+
     let server = Server::bind(&addr)
         .serve(move || {
-            let queue = url_queue.clone();
-            let outputs = output_transmitter.clone();
-            let query_group = queries.clone();
+            let queue = queue.clone();
+            let outputs = outputs.clone();
+            let query_group = query_group.clone();
             service_fn_ok(move |req: Request<Body>| match req.uri().path() {
                 "/queries" => {
                     info!("received query request");
@@ -101,6 +117,7 @@ pub fn main(addr: SocketAddr, debug: bool, debug_queries: usize, database_locati
         .map_err(|e| error!("server error: {}", e));
 
     thread::spawn(move || loop {
+        // database output thread for outputs
         let batch = match output_receiver.recv() {
             Ok(value) => value,
             Err(error) => break,
@@ -267,4 +284,30 @@ fn pull_queries_from_db(conn: &postgres::Connection) -> Option<QueryGroup> {
     }
 
     Some(QueryGroup { queries: queries })
+}
+
+fn pull_urls_from_db_and_remove(conn: &postgres::Connection, delete: bool) -> Option<Vec<String>> {
+    let response = match conn.query("SELECT url FROM inputs", &[]) {
+        Ok(value) => value,
+        Err(error) => {
+            warn!("encountered error while retrieving urls: `{}`", error);
+            return None;
+        }
+    };
+
+    let mut urls: Vec<String> = Vec::new();
+    for row in &response {
+        let url: String = row.get(0);
+        urls.push(url);
+    }
+
+    if delete {
+        let response = conn.execute("DELETE FROM inputs", &[]);
+        match response {
+            Ok(value) => info!("successfully purged URLs from database and loaded them into the queue ({})", value),
+            Err(error) => warn!("unable to remove URLs from the database (`{}`); duplicate work might be performed...", error)
+        }
+    }
+
+    Some(urls)
 }
