@@ -24,8 +24,8 @@ ENV RUST_LOG mieql=info
 
 COPY Cargo.toml .
 COPY Cargo.lock .
-COPY src .
+COPY src src
 
 RUN /bin/bash -c "./.cargo/bin/cargo build --release"
 
-CMD ["./target/release/mieql"]
+ENTRYPOINT ["./target/release/mieql"]
