@@ -2,6 +2,7 @@ use flate2::read::MultiGzDecoder;
 use futures::{Future, IntoFuture};
 use httparse::Response;
 use ieql::common::compilation::CompilableTo;
+use ieql::output::output::OutputBatch;
 use ieql::query::query::QueryGroup;
 use ieql::scan::scanner::Scanner;
 use nom::{MemProducer, Producer};
@@ -10,9 +11,9 @@ use rusoto_s3::S3;
 use std::io::Read;
 use std::sync::mpsc::channel;
 use std::thread;
+use std::time::Duration;
 use std::time::SystemTime;
 use sys_info;
-use std::time::Duration;
 
 pub fn main(master_url: String, threads: u8, queue_size: usize, update_interval: u64) {
     // Test connection
@@ -76,6 +77,9 @@ pub fn main(master_url: String, threads: u8, queue_size: usize, update_interval:
     let mut total_outputs = 0;
     let mut start_time = SystemTime::now();
 
+    // Reqwest client
+    let client = reqwest::Client::new();
+
     // Stream and process an archive
     loop {
         // Stream loop
@@ -125,7 +129,10 @@ pub fn main(master_url: String, threads: u8, queue_size: usize, update_interval:
             let mut currently_processing = scan_interface.batches_pending_processing();
             let mut instances = 1;
             while queue_size <= currently_processing {
-                warn!("maximum queue sized reached ({} >= {}); sleeping for 1s... (#{})", currently_processing, queue_size, instances);
+                warn!(
+                    "maximum queue sized reached ({} >= {}); sleeping for 1s... (#{})",
+                    currently_processing, queue_size, instances
+                );
                 instances += 1;
                 thread::sleep(Duration::from_millis(1000));
                 currently_processing = scan_interface.batches_pending_processing();
@@ -192,10 +199,14 @@ pub fn main(master_url: String, threads: u8, queue_size: usize, update_interval:
 
             if documents_processed % update_interval == 0 {
                 let old_outputs = total_outputs;
+                let mut output_batch = OutputBatch {
+                    outputs: Vec::new(),
+                };
                 for output in scan_interface.outputs() {
-                    total_outputs += output.outputs.len();
+                    output_batch.merge_with(output);
                 }
-                let delta_outputs = total_outputs - old_outputs;
+                let new_outputs = output_batch.outputs.len();
+                total_outputs = old_outputs + new_outputs;
                 let mut time_elapsed = SystemTime::now()
                     .duration_since(start_time)
                     .expect("time went backwards!")
@@ -204,13 +215,22 @@ pub fn main(master_url: String, threads: u8, queue_size: usize, update_interval:
                     time_elapsed += 1; // for now...
                 }
                 let docs_per_second = documents_processed / time_elapsed;
+
+                match client
+                    .post(format!("{}/output", &master_url).as_str())
+                    .body(ron::ser::to_string(&output_batch).unwrap())
+                    .send() {
+                        Ok(_) => (),
+                        Err(error) => warn!("encountered error while pushing outputs to master: `{}`", error)
+                    };
+
                 info!(
                     "[{} queued] [{} docs/second] [{} processed] [{} outputs, Δ{}]",
                     scan_interface.batches_pending_processing(),
                     docs_per_second,
                     documents_processed,
                     total_outputs,
-                    delta_outputs
+                    new_outputs
                 );
             }
         }
