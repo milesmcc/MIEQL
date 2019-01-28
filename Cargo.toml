@@ -4,6 +4,10 @@ version = "0.1.0"
 authors = ["R. Miles McCain <0@rmrm.io>"]
 edition = "2018"
 
+[[bin]]
+path = "src/main.rs"
+name = "mieql"
+
 [dependencies]
 ieql = "0.2.1"
 rusoto_core = "0.36.0"
