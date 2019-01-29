@@ -284,12 +284,12 @@ fn pull_url_from_db(conn: &postgres::Connection, delete: bool) -> Option<String>
         }
     };
 
-    let mut url = String::new();
+    let mut url: Option<String> = None;
     for row in &response {
-        url = row.get(0);
+        url = Some(row.get(0));
     }
 
-    if delete {
+    if delete && url != None {
         let response = conn.execute("DELETE FROM inputs WHERE url = $1", &[&url]);
         match response {
             Ok(value) => info!("successfully purged URL from database ({})", value),
@@ -297,5 +297,5 @@ fn pull_url_from_db(conn: &postgres::Connection, delete: bool) -> Option<String>
         }
     }
 
-    Some(url)
+    url
 }
