@@ -19,10 +19,7 @@ extern crate serde_json;
 
 use std::net::SocketAddr;
 
-use clap::{App, Arg, SubCommand};
-
-use ieql::query::query::{Query, QueryGroup};
-use std::path::Path;
+use clap::{App, SubCommand};
 
 mod client;
 mod master;

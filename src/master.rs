@@ -1,12 +1,11 @@
 use futures::future;
 use hyper::rt;
 use hyper::service::service_fn_ok;
-use hyper::{Body, Method, Request, Response, Server};
+use hyper::{Body, Request, Response, Server};
 use postgres::Connection;
 use rt::{Future, Stream};
 
 use futures;
-use std::collections::VecDeque;
 use std::net::SocketAddr;
 use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
@@ -50,20 +49,24 @@ pub fn main(
     let sql_conn = Arc::new(Mutex::new(conn));
     let (output_transmitter, output_receiver) = mpsc::channel::<OutputBatch>();
 
-    let queries: Arc<Mutex<Option<QueryGroup>>> = Arc::new(Mutex::new(match pull_queries_from_db(
-        &sql_conn.lock().unwrap(),
-    ) {
-        Some(value) => {
-            info!("loaded {} queries from the database", value.queries.len());
-            if debug_queries > 0 && debug {
-                warn!("because debug queries are specified and debug mode is enabled, the database queries will be ignored");
+    let queries: Arc<Mutex<QueryGroup>> = Arc::new(Mutex::new(match debug {
+        true => {
+            let mut query_vec: Vec<Query> = Vec::new();
+            for _ in 0..debug_queries {
+                query_vec.push(util::get_query());
             }
-            Some(value)
+            QueryGroup { queries: query_vec }
         }
-        None => {
-            error!("unable to pull queries from the database!");
-            None
-        }
+        false => match pull_queries_from_db(&sql_conn.lock().unwrap()) {
+            Some(value) => {
+                info!("loaded {} queries from the database", value.queries.len());
+                value
+            }
+            None => {
+                error!("unable to pull queries from the database!");
+                std::process::exit(101);
+            }
+        },
     }));
 
     let conn = sql_conn.clone();
@@ -78,7 +81,7 @@ pub fn main(
             service_fn_ok(move |req: Request<Body>| match req.uri().path() {
                 "/queries" => {
                     info!("received query request");
-                    get_queries(&*query_group.lock().unwrap(), debug_queries)
+                    get_queries(&query_group.lock().unwrap())
                 }
                 "/data" => {
                     info!("received data request");
@@ -115,7 +118,7 @@ pub fn main(
         // database output thread for outputs
         let batch = match output_receiver.recv() {
             Ok(value) => value,
-            Err(error) => break,
+            Err(_) => break, // we're done
         };
         info!("received output batch; sending it to database...");
         push_output_batch_to_db(&conn.lock().unwrap(), &batch);
@@ -126,19 +129,7 @@ pub fn main(
     info!("listening...")
 }
 
-fn get_queries(db_queries: &Option<QueryGroup>, debug_queries: usize) -> Response<Body> {
-    let debug_query_group = {
-        let mut query_vec: Vec<Query> = Vec::new();
-        for _ in 0..debug_queries {
-            query_vec.push(util::get_query());
-        }
-        QueryGroup { queries: query_vec }
-    };
-    let mut queries = match db_queries {
-        Some(value) => value,
-        None => &debug_query_group,
-    };
-
+fn get_queries(queries: &QueryGroup) -> Response<Body> {
     let response_str = ron::ser::to_string(&queries).unwrap(); // data is from a trusted source
     Response::builder()
         .status(200)
@@ -147,7 +138,7 @@ fn get_queries(db_queries: &Option<QueryGroup>, debug_queries: usize) -> Respons
 }
 
 fn get_debug_data() -> Response<Body> {
-    Response::new(Body::from(String::from("crawl-data/CC-MAIN-2018-51/segments/1544376823710.44/warc/CC-MAIN-20181212000955-20181212022455-00124.warc.gz")))
+    Response::new(Body::from(String::from("crawl-data/CC-MAIN-2019-04/segments/1547583658928.22/warc/CC-MAIN-20190117102635-20190117124635-00325.warc.gz")))
 }
 
 fn get_data(url: Option<String>) -> Response<Body> {
@@ -183,15 +174,18 @@ fn post_output(
         {
             Ok(value) => value,
             Err(error) => {
-                warn!("encountered error while loading POST data: `{}`", error);
+                error!("encountered error while loading POST data: `{}`", error);
                 return;
             }
         };
         match ron::de::from_str(data.as_str()) {
             Ok(value) => {
-                transmitter.send(value);
+                match transmitter.send(value) {
+                    Ok(_) => (),
+                    Err(_) => error!("unable to send output batch!")
+                }
             }
-            Err(error) => warn!("unable to deserialize output batch: `{}`", error),
+            Err(error) => error!("unable to deserialize output batch: `{}`", error),
         };
     });
     Response::builder()

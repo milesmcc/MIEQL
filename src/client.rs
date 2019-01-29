@@ -1,19 +1,14 @@
 use flate2::read::MultiGzDecoder;
-use futures::{Future, IntoFuture};
-use httparse::Response;
 use ieql::common::compilation::CompilableTo;
 use ieql::output::output::OutputBatch;
 use ieql::query::query::QueryGroup;
 use ieql::scan::scanner::Scanner;
-use nom::{MemProducer, Producer};
 use rusoto_s3;
 use rusoto_s3::S3;
 use std::io::Read;
-use std::sync::mpsc::channel;
 use std::thread;
 use std::time::Duration;
 use std::time::SystemTime;
-use sys_info;
 
 pub fn main(master_url: String, threads: u8, queue_size: usize, update_interval: u64) {
     // Test connection
@@ -75,7 +70,7 @@ pub fn main(master_url: String, threads: u8, queue_size: usize, update_interval:
     // Analytics
     let mut documents_processed = 0u64;
     let mut total_outputs = 0;
-    let mut start_time = SystemTime::now();
+    let start_time = SystemTime::now();
 
     // Reqwest client
     let client = reqwest::Client::new();
@@ -148,7 +143,7 @@ pub fn main(master_url: String, threads: u8, queue_size: usize, update_interval:
                 let resp = decoder.read(&mut buf);
                 let bytes_read = match resp {
                     Ok(value) => value,
-                    Err(error) => {
+                    Err(_) => {
                         error!("encountered issue while streaming...");
                         break;
                     }
@@ -193,7 +188,12 @@ pub fn main(master_url: String, threads: u8, queue_size: usize, update_interval:
             debug!("processing asynchronously: {:?}", document.url);
             current_document_batch.push(document);
             if current_document_batch.len() >= 64 {
-                scan_interface.process(docs_to_doc_reference(current_document_batch));
+                match scan_interface.process(docs_to_doc_reference(current_document_batch)) {
+                    Ok(_) => (),
+                    Err(_) => {
+                        error!("unable to scan document batch!");
+                    }
+                }
                 current_document_batch = Vec::new();
             }
 
@@ -219,10 +219,14 @@ pub fn main(master_url: String, threads: u8, queue_size: usize, update_interval:
                 match client
                     .post(format!("{}/output", &master_url).as_str())
                     .body(ron::ser::to_string(&output_batch).unwrap())
-                    .send() {
-                        Ok(_) => (),
-                        Err(error) => warn!("encountered error while pushing outputs to master: `{}`", error)
-                    };
+                    .send()
+                {
+                    Ok(_) => (),
+                    Err(error) => warn!(
+                        "encountered error while pushing outputs to master: `{}`",
+                        error
+                    ),
+                };
 
                 info!(
                     "[{} queued] [{} docs/second] [{} processed] [{} outputs, Δ{}]",
@@ -235,7 +239,12 @@ pub fn main(master_url: String, threads: u8, queue_size: usize, update_interval:
             }
         }
         // Send remaining documents
-        scan_interface.process(docs_to_doc_reference(current_document_batch));
+        match scan_interface.process(docs_to_doc_reference(current_document_batch)) {
+            Ok(_) => (),
+            Err(_) => {
+                error!("unable to scan document batch!");
+            }
+        }
     }
 }
 
