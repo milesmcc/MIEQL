@@ -617,7 +617,7 @@ dependencies = [
 
 [[package]]
 name = "ieql"
-version = "0.2.2"
+version = "0.2.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 dependencies = [
  "clap 2.32.0 (registry+https://github.com/rust-lang/crates.io-index)",
@@ -777,7 +777,7 @@ dependencies = [
  "futures 0.1.25 (registry+https://github.com/rust-lang/crates.io-index)",
  "httparse 1.3.3 (registry+https://github.com/rust-lang/crates.io-index)",
  "hyper 0.12.21 (registry+https://github.com/rust-lang/crates.io-index)",
- "ieql 0.2.2 (registry+https://github.com/rust-lang/crates.io-index)",
+ "ieql 0.2.3 (registry+https://github.com/rust-lang/crates.io-index)",
  "log 0.4.6 (registry+https://github.com/rust-lang/crates.io-index)",
  "nom 2.2.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "postgres 0.15.2 (registry+https://github.com/rust-lang/crates.io-index)",
@@ -2214,7 +2214,7 @@ dependencies = [
 "checksum hyper 0.12.21 (registry+https://github.com/rust-lang/crates.io-index)" = "6d6b1a3d01ac8035b8d2d94e0e5254eab82746f09046baed763751b00253232b"
 "checksum hyper-tls 0.3.1 (registry+https://github.com/rust-lang/crates.io-index)" = "32cd73f14ad370d3b4d4b7dce08f69b81536c82e39fcc89731930fe5788cd661"
 "checksum idna 0.1.5 (registry+https://github.com/rust-lang/crates.io-index)" = "38f09e0f0b1fb55fdee1f17470ad800da77af5186a1a76c026b679358b7e844e"
-"checksum ieql 0.2.2 (registry+https://github.com/rust-lang/crates.io-index)" = "25d5cfa22f9721ef331bfe2c9f5c8202e2091f4eefa73ad6144e478479b1b613"
+"checksum ieql 0.2.3 (registry+https://github.com/rust-lang/crates.io-index)" = "b8b4059910f88ab523eaacc977cb3d2cc4cca8af336ea97fee3b160088442bfd"
 "checksum indexmap 1.0.2 (registry+https://github.com/rust-lang/crates.io-index)" = "7e81a7c05f79578dbc15793d8b619db9ba32b4577003ef3af1a91c416798c58d"
 "checksum iovec 0.1.2 (registry+https://github.com/rust-lang/crates.io-index)" = "dbe6e417e7d0975db6512b90796e8ce223145ac4e33c377e4a42882a0e88bb08"
 "checksum itoa 0.4.3 (registry+https://github.com/rust-lang/crates.io-index)" = "1306f3464951f30e30d12373d31c79fbd52d236e5e896fd92f96ec7babbbe60b"
