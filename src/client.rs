@@ -216,17 +216,19 @@ pub fn main(master_url: String, threads: u8, queue_size: usize, update_interval:
                 }
                 let docs_per_second = documents_processed / time_elapsed;
 
-                match client
-                    .post(format!("{}/output", &master_url).as_str())
-                    .body(ron::ser::to_string(&output_batch).unwrap())
-                    .send()
-                {
-                    Ok(_) => (),
-                    Err(error) => warn!(
-                        "encountered error while pushing outputs to master: `{}`",
-                        error
-                    ),
-                };
+                if new_outputs > 0 {
+                    match client
+                        .post(format!("{}/output", &master_url).as_str())
+                        .body(ron::ser::to_string(&output_batch).unwrap())
+                        .send()
+                    {
+                        Ok(_) => (),
+                        Err(error) => warn!(
+                            "encountered error while pushing outputs to master: `{}`",
+                            error
+                        ),
+                    };
+                }
 
                 info!(
                     "[{} queued] [{} docs/second] [{} processed] [{} outputs, Δ{}]",
