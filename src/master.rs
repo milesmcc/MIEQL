@@ -24,7 +24,6 @@ pub fn main(addr: SocketAddr, debug: bool, debug_queries: usize, database_locati
     if debug {
         info!("running in debug mode!")
     }
-    let mut url_queue: VecDeque<String> = VecDeque::new();
 
     let conn = match Connection::connect(database_location, postgres::TlsMode::None) {
         Ok(value) => value,
@@ -43,21 +42,11 @@ pub fn main(addr: SocketAddr, debug: bool, debug_queries: usize, database_locati
         false => error!("database validation failed; make sure the following tables are available: `queries`, `outputs`, `inputs`")
     }
 
-    if !debug {
-        match pull_urls_from_db_and_remove(&conn, remove_urls) {
-            Some(value) => {
-                info!("loaded {} urls from the database", value.len());
-                url_queue.extend(value);
-            },
-            None => warn!("unable to read URLs from database (none provided)")
-        }
-    }
-
-    let url_queue = Arc::new(Mutex::new(url_queue));
+    let sql_conn = Arc::new(Mutex::new(conn));
     let (output_transmitter, output_receiver) = mpsc::channel::<OutputBatch>();
 
     let queries: Arc<Mutex<Option<QueryGroup>>> = Arc::new(Mutex::new(match pull_queries_from_db(
-        &conn,
+        &sql_conn.lock().unwrap(),
     ) {
         Some(value) => {
             info!("loaded {} queries from the database", value.queries.len());
@@ -72,13 +61,13 @@ pub fn main(addr: SocketAddr, debug: bool, debug_queries: usize, database_locati
         }
     }));
 
-    let queue = url_queue.clone();
+    let conn = sql_conn.clone();
     let outputs = output_transmitter.clone();
     let query_group = queries.clone();
 
     let server = Server::bind(&addr)
         .serve(move || {
-            let queue = queue.clone();
+            let conn = conn.clone();
             let outputs = outputs.clone();
             let query_group = query_group.clone();
             service_fn_ok(move |req: Request<Body>| match req.uri().path() {
@@ -91,7 +80,7 @@ pub fn main(addr: SocketAddr, debug: bool, debug_queries: usize, database_locati
                     if debug {
                         get_debug_data()
                     } else {
-                        get_data(&mut *queue.lock().unwrap())
+                        get_data(pull_url_from_db(&conn.lock().unwrap(), remove_urls))
                     }
                 }
                 "/output" => {
@@ -116,6 +105,7 @@ pub fn main(addr: SocketAddr, debug: bool, debug_queries: usize, database_locati
         })
         .map_err(|e| error!("server error: {}", e));
 
+    let conn = sql_conn.clone();
     thread::spawn(move || loop {
         // database output thread for outputs
         let batch = match output_receiver.recv() {
@@ -123,7 +113,7 @@ pub fn main(addr: SocketAddr, debug: bool, debug_queries: usize, database_locati
             Err(error) => break,
         };
         info!("received output batch; sending it to database...");
-        push_output_batch_to_db(&conn, &batch);
+        push_output_batch_to_db(&conn.lock().unwrap(), &batch);
     });
 
     hyper::rt::run(server);
@@ -155,14 +145,8 @@ fn get_debug_data() -> Response<Body> {
     Response::new(Body::from(String::from("crawl-data/CC-MAIN-2018-51/segments/1544376823710.44/warc/CC-MAIN-20181212000955-20181212022455-00124.warc.gz")))
 }
 
-fn get_data(queue: &mut VecDeque<String>) -> Response<Body> {
-    let item = queue.pop_front();
-    info!(
-        "data request returned `{:?}` (queue size: {})",
-        item,
-        queue.len()
-    );
-    match item {
+fn get_data(url: Option<String>) -> Response<Body> {
+    match url {
         Some(value) => Response::builder()
             .status(200)
             .body(Body::from(value))
@@ -286,8 +270,8 @@ fn pull_queries_from_db(conn: &postgres::Connection) -> Option<QueryGroup> {
     Some(QueryGroup { queries: queries })
 }
 
-fn pull_urls_from_db_and_remove(conn: &postgres::Connection, delete: bool) -> Option<Vec<String>> {
-    let response = match conn.query("SELECT url FROM inputs", &[]) {
+fn pull_url_from_db(conn: &postgres::Connection, delete: bool) -> Option<String> {
+    let response = match conn.query("SELECT url FROM inputs LIMIT 1", &[]) {
         Ok(value) => value,
         Err(error) => {
             warn!("encountered error while retrieving urls: `{}`", error);
@@ -295,19 +279,18 @@ fn pull_urls_from_db_and_remove(conn: &postgres::Connection, delete: bool) -> Op
         }
     };
 
-    let mut urls: Vec<String> = Vec::new();
+    let mut url = String::new();
     for row in &response {
-        let url: String = row.get(0);
-        urls.push(url);
+        url = row.get(0);
     }
 
     if delete {
-        let response = conn.execute("DELETE FROM inputs", &[]);
+        let response = conn.execute("DELETE FROM inputs WHERE url = $1", &[&url]);
         match response {
-            Ok(value) => info!("successfully purged URLs from database and loaded them into the queue ({})", value),
-            Err(error) => warn!("unable to remove URLs from the database (`{}`); duplicate work might be performed...", error)
+            Ok(value) => info!("successfully purged URL from database ({})", value),
+            Err(error) => warn!("unable to remove URL from the database (`{}`); duplicate work might be performed...", error)
         }
     }
 
-    Some(urls)
+    Some(url)
 }
