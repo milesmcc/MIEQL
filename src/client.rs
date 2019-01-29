@@ -22,7 +22,7 @@ pub fn main(master_url: String, threads: u8, queue_size: usize, update_interval:
         Ok(value) => value,
         Err(error) => {
             error!("unable to connect to master server: `{}`", error);
-            return;
+            std::process::exit(101);
         }
     })
     .text()
@@ -32,7 +32,7 @@ pub fn main(master_url: String, threads: u8, queue_size: usize, update_interval:
         "nice to meet you" => info!("successfully connected to server"),
         _ => {
             error!("unable to connect to server");
-            return;
+            std::process::exit(101);
         }
     }
 
@@ -45,7 +45,7 @@ pub fn main(master_url: String, threads: u8, queue_size: usize, update_interval:
         Ok(value) => value,
         Err(error) => {
             error!("unable to get queries: `{}`", error);
-            return;
+            std::process::exit(101);
         }
     })
     .text()
@@ -54,7 +54,7 @@ pub fn main(master_url: String, threads: u8, queue_size: usize, update_interval:
         Ok(value) => value,
         Err(error) => {
             error!("unable to deserialize queries: `{}`", error);
-            return;
+            std::process::exit(101);
         }
     };
     info!(
@@ -67,7 +67,7 @@ pub fn main(master_url: String, threads: u8, queue_size: usize, update_interval:
         Ok(value) => value,
         Err(error) => {
             error!("unable to compile queries: {}", error);
-            return;
+            std::process::exit(101);
         }
     };
     let scan_interface = compiled_queries.scan_concurrently(threads);
@@ -88,7 +88,7 @@ pub fn main(master_url: String, threads: u8, queue_size: usize, update_interval:
             Ok(value) => value,
             Err(error) => {
                 error!("unable to get data location from master: `{}`", error);
-                return;
+                std::process::exit(101);
             }
         };
         if data_response.status().as_u16() == 204 {
@@ -117,7 +117,7 @@ pub fn main(master_url: String, threads: u8, queue_size: usize, update_interval:
             Some(value) => value,
             None => {
                 error!("unable to get response body");
-                return;
+                continue;
             }
         })
         .into_blocking_read();

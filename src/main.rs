@@ -64,21 +64,21 @@ fn run(matches: clap::ArgMatches) {
                 Ok(value) => value,
                 Err(error) => {
                     error!("invalid number of threads `{}` (`{}`)!", m.value_of("threads").unwrap(), error);
-                    return;
+                    std::process::exit(101);
                 }
             };
             let queue_size: usize = match m.value_of("queue").unwrap_or("256").parse() {
                 Ok(value) => value,
                 Err(error) => {
                     error!("invalid max queue size `{}` (`{}`)!", m.value_of("queue").unwrap(), error);
-                    return;
+                    std::process::exit(101);
                 }
             };
             let update_interval: u64 = match m.value_of("update-interval").unwrap_or("512").parse() {
                 Ok(value) => value,
                 Err(error) => {
                     error!("invalid update interval `{}` (`{}`)!", m.value_of("update-interval").unwrap(), error);
-                    return;
+                    std::process::exit(101);
                 }
             };
             client::main(String::from(master_url), threads, queue_size, update_interval);

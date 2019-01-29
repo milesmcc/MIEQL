@@ -19,7 +19,13 @@ use ieql::{Query, QueryGroup};
 
 use super::util;
 
-pub fn main(addr: SocketAddr, debug: bool, debug_queries: usize, database_location: &str, remove_urls: bool) {
+pub fn main(
+    addr: SocketAddr,
+    debug: bool,
+    debug_queries: usize,
+    database_location: &str,
+    remove_urls: bool,
+) {
     info!("running as master on `{}`...", addr);
     if debug {
         info!("running in debug mode!")
@@ -35,7 +41,6 @@ pub fn main(addr: SocketAddr, debug: bool, debug_queries: usize, database_locati
             return;
         }
     }; // connection should be on localhost
-
 
     match verify_database(&conn) {
         true => info!("successfully validated database"),
