@@ -9,7 +9,7 @@ path = "src/main.rs"
 name = "mieql"
 
 [dependencies]
-ieql = "0.2.4"
+ieql = "0.2.6"
 rusoto_core = "0.36.0"
 rusoto_s3 = "0.36.0"
 clap = "2.32"

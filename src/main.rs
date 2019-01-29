@@ -64,7 +64,7 @@ fn run(matches: clap::ArgMatches) {
                     std::process::exit(101);
                 }
             };
-            let queue_size: usize = match m.value_of("queue").unwrap_or("256").parse() {
+            let queue_size: isize = match m.value_of("queue").unwrap_or("256").parse() {
                 Ok(value) => value,
                 Err(error) => {
                     error!("invalid max queue size `{}` (`{}`)!", m.value_of("queue").unwrap(), error);

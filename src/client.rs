@@ -10,7 +10,7 @@ use std::thread;
 use std::time::Duration;
 use std::time::SystemTime;
 
-pub fn main(master_url: String, threads: u8, queue_size: usize, update_interval: u64) {
+pub fn main(master_url: String, threads: u8, queue_size: isize, update_interval: u64) {
     // Test connection
     let handshake_url = format!("{}/handshake", &master_url);
     let handshake_response = (match reqwest::get(handshake_url.as_str()) {
