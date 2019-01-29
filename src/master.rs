@@ -225,7 +225,7 @@ fn verify_database(conn: &postgres::Connection) -> bool {
 
 fn push_output_batch_to_db(conn: &postgres::Connection, outputs: &OutputBatch) {
     let prepared_statement = conn
-        .prepare("INSERT INTO outputs (json) VALUES ($1)")
+        .prepare("INSERT INTO outputs (jsonb) VALUES ($1)")
         .unwrap();
     for output in &outputs.outputs {
         // TODO: do as a single batch

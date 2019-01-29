@@ -19,7 +19,7 @@ CREATE TABLE queries (
 );
 
 CREATE TABLE outputs (
-    json JSONB
+    jsonb JSONB
 );
 
 CREATE TABLE inputs (
