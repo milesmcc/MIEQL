@@ -8,7 +8,7 @@ spec:
     spec:
       containers:
       - name: master
-        image: gcr.io/mieql-230000/github.com/milesmcc/mieql:0e2a361ef819390c16773dd5c3867138ab1d393f
+        image: gcr.io/mieql-230000/github.com/milesmcc/mieql:dae65a7d69d100e9d33cf8357a1b9e07e41d3153
         args:
         - master
         - '--database=$(POSTGRES_URL)'
@@ -23,7 +23,7 @@ spec:
               name: postgres
               key: url
       - name: client
-        image: gcr.io/mieql-230000/github.com/milesmcc/mieql:0e2a361ef819390c16773dd5c3867138ab1d393f
+        image: gcr.io/mieql-230000/github.com/milesmcc/mieql:dae65a7d69d100e9d33cf8357a1b9e07e41d3153
         args:
         - client
         - '--threads=2'
