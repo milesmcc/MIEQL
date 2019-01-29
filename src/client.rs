@@ -267,6 +267,6 @@ fn warc_to_document(record: warc_parser::Record) -> Result<ieql::Document, Strin
     Ok(ieql::Document {
         data: record.content,
         url: url,
-        mime: None,
+        mime: Some(String::from("text/html")), // most likely; in any case, it's a safe bet.
     })
 }
