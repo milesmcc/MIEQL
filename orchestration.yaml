@@ -3,14 +3,16 @@ kind: Job
 metadata:
   name: scan
 spec:
+  parallelism: 8
   template:
     spec:
       containers:
       - name: master
-        image: gcr.io/mieql-230000/github.com/milesmcc/mieql:506c0c8be596a10a61b2ae2fd8f539b26dd571f7
+        image: gcr.io/mieql-230000/github.com/milesmcc/mieql:0e2a361ef819390c16773dd5c3867138ab1d393f
         args:
         - master
         - '--database=$(POSTGRES_URL)'
+        - '--remove'
         ports:
          - name: http
            containerPort: 3000
@@ -21,10 +23,11 @@ spec:
               name: postgres
               key: url
       - name: client
-        image: gcr.io/mieql-230000/github.com/milesmcc/mieql:506c0c8be596a10a61b2ae2fd8f539b26dd571f7
+        image: gcr.io/mieql-230000/github.com/milesmcc/mieql:0e2a361ef819390c16773dd5c3867138ab1d393f
         args:
         - client
         - '--threads=2'
+        - '--queue=32'
         env:
         - name: AWS_SECRET_ACCESS_KEY
           valueFrom:
