@@ -36,7 +36,8 @@ fn main() {
             SubCommand::with_name("client")
                 .about("Act as the client")
                 .args_from_usage("-t, --threads=[# of threads] 'The number of threads to use (default 8)'")
-                .args_from_usage("-m, --master=[master url] 'The url of the master (default <http://0.0.0.0:3000>)'")
+                .args_from_usage("-m, --master=[master url] 'The url of the master (default <http://localhost:8000>)'")
+                .args_from_usage("-s, --secret-key=<secret key> 'The server group secret key for the master server'")
                 .args_from_usage("-q, --queue=[max queue size] 'Maximum number of items in the queue at any given time (default 256)'")
                 .args_from_usage("-u, --update-interval=[update frequency] 'How frequently to log a status update, in terms of documents (default 512)")
         )
@@ -56,7 +57,8 @@ fn main() {
 fn run(matches: clap::ArgMatches) {
     match matches.subcommand() {
         ("client", Some(m)) => {
-            let master_url = m.value_of("master").unwrap_or("http://0.0.0.0:3000");
+            let master_url = m.value_of("master").unwrap_or("http://localhost:8000");
+            let secret_key = m.value_of("secret-key").expect("The secret key is required for client operation!");
             let threads: u8 = match m.value_of("threads").unwrap_or("8").parse() {
                 Ok(value) => value,
                 Err(error) => {
@@ -78,7 +80,7 @@ fn run(matches: clap::ArgMatches) {
                     std::process::exit(101);
                 }
             };
-            client::main(String::from(master_url), threads, queue_size, update_interval);
+            client::main(String::from(master_url), String::from(secret_key), threads, queue_size, update_interval);
         }
         ("master", Some(m)) => {
             let bind_address: SocketAddr = m
