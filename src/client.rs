@@ -1,7 +1,7 @@
 use flate2::read::MultiGzDecoder;
 use ieql::common::compilation::CompilableTo;
 use ieql::output::output::OutputBatch;
-use ieql::query::query::QueryGroup;
+use ieql::query::query::{QueryGroup, Query};
 use ieql::scan::scanner::Scanner;
 use rusoto_s3;
 use rusoto_s3::S3;
@@ -9,11 +9,28 @@ use std::io::Read;
 use std::thread;
 use std::time::Duration;
 use std::time::SystemTime;
+use serde_json::{Value};
 
-pub fn main(master_url: String, threads: u8, queue_size: isize, update_interval: u64) {
-    // Test connection
-    let handshake_url = format!("{}/handshake", &master_url);
-    let handshake_response = (match reqwest::get(handshake_url.as_str()) {
+fn get_authenticated(access_key: &str, url: &str) -> Option<Value> {
+    let client = reqwest::Client::new();
+    let res = client
+        .get(url)
+        .header("X-Access-Key", access_key)
+        .send();
+    match res {
+        Ok(mut data) => Some(serde_json::from_str(data.text().unwrap().as_str()).unwrap()),
+        Err(_) => None
+    }
+}
+
+pub fn main(master_url: String, secret_key: String, threads: u8, queue_size: isize, update_interval: u64) {
+    // Establish connection & get access key
+    //
+    // Note that because any given instance will never last more than 24 hours
+    // and access keys last 48 hours, re-establishing the connection is never
+    // necessary.
+    let registration_url = format!("{}/api/register/{}", &master_url, &secret_key);
+    let registration_response = (match reqwest::get(registration_url.as_str()) {
         Ok(value) => value,
         Err(error) => {
             error!("unable to connect to master server: `{}`", error);
@@ -22,30 +39,30 @@ pub fn main(master_url: String, threads: u8, queue_size: isize, update_interval:
     })
     .text()
     .unwrap();
+    let registration_data: Value = serde_json::from_str(registration_response.as_str()).unwrap();
 
-    match handshake_response.as_str() {
-        "nice to meet you" => info!("successfully connected to server"),
-        _ => {
-            error!("unable to connect to server");
-            std::process::exit(101);
-        }
-    }
+    let access_key: String = registration_data["data"]["access_key"].to_string();
 
+    info!(
+        "successfully established access key with master: {}",
+        access_key
+    );
     // Create dataset client
     let s3_client = rusoto_s3::S3Client::new(rusoto_core::region::Region::UsEast1);
 
     // Get queries
     let queries_url = format!("{}/queries", &master_url);
-    let queries_response = (match reqwest::get(queries_url.as_str()) {
-        Ok(value) => value,
-        Err(error) => {
-            error!("unable to get queries: `{}`", error);
+    let queries_response = match get_authenticated(access_key.as_str(), queries_url.as_str()) {
+        Some(value) => value,
+        None => {
+            error!("unable to get queries");
             std::process::exit(101);
         }
-    })
-    .text()
-    .unwrap();
-    let queries: QueryGroup = match ron::de::from_str(queries_response.as_str()) {
+    };
+
+    let query_vec: Vec<Query> = Vec::new();
+
+    let queries: QueryGroup = match ron::de::from_str("") {
         Ok(value) => value,
         Err(error) => {
             error!("unable to deserialize queries: `{}`", error);
