@@ -3,12 +3,13 @@ kind: Job
 metadata:
   name: scan
 spec:
-  parallelism: 8
+  backoffLimit: 50
+  parallelism: 3
   template:
     spec:
       containers:
       - name: master
-        image: gcr.io/mieql-230000/github.com/milesmcc/mieql:dae65a7d69d100e9d33cf8357a1b9e07e41d3153
+        image: gcr.io/mieql-230000/github.com/milesmcc/mieql:d1c5ad6bbdd41366bb234452c7f28a2ee66d5e21
         args:
         - master
         - '--database=$(POSTGRES_URL)'
@@ -22,12 +23,15 @@ spec:
             secretKeyRef:
               name: postgres
               key: url
+        resources:
+          requests:
+            cpu: 100m
       - name: client
-        image: gcr.io/mieql-230000/github.com/milesmcc/mieql:dae65a7d69d100e9d33cf8357a1b9e07e41d3153
+        image: gcr.io/mieql-230000/github.com/milesmcc/mieql:d1c5ad6bbdd41366bb234452c7f28a2ee66d5e21
         args:
         - client
-        - '--threads=2'
-        - '--queue=32'
+        - '--threads=6'
+        - '--queue=64'
         env:
         - name: AWS_SECRET_ACCESS_KEY
           valueFrom:
@@ -39,4 +43,7 @@ spec:
             secretKeyRef:
               name: aws
               key: aws_access_key_id
-      restartPolicy: Never
+        resources:
+          requests:
+            cpu: 6900m
+      restartPolicy: OnFailure
