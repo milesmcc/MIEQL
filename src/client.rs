@@ -2,7 +2,7 @@ use flate2::read::MultiGzDecoder;
 use ieql::common::compilation::CompilableTo;
 use ieql::output::output::OutputBatch;
 use ieql::query::query::{QueryGroup, Query};
-use ieql::scan::scanner::Scanner;
+use ieql::scan::scanner::{AsyncScanInterface, Scanner};
 use rusoto_s3;
 use rusoto_s3::S3;
 use std::io::Read;
@@ -11,15 +11,56 @@ use std::time::Duration;
 use std::time::SystemTime;
 use serde_json::{Value};
 
-fn get_authenticated(access_key: &str, url: &str) -> Option<Value> {
+fn get_authenticated(access_key: &str, url: &str) -> Result<Value, String> {
     let client = reqwest::Client::new();
     let res = client
         .get(url)
         .header("X-Access-Key", access_key)
         .send();
     match res {
-        Ok(mut data) => Some(serde_json::from_str(data.text().unwrap().as_str()).unwrap()),
-        Err(_) => None
+        Ok(mut data) => match data.text() {
+            Ok(json_value) => match serde_json::from_str(json_value.as_str()) {
+                Ok(inner_text_value) => Ok(inner_text_value),
+                Err(_) => Err(format!("invalid json returned")),
+            },
+            Err(_) => Err(String::from("unable to parse response text")),
+        },
+        Err(_) => Err(String::from("unable to extract response text"))
+    }
+}
+
+fn post_outputs(access_key: &str, url: &str, outputs: OutputBatch) -> Result<u64, String> {
+    let client = reqwest::Client::new();
+    let data = match serde_json::to_string_pretty(&outputs) {
+        Ok(value) => {
+            // println!("{}", value);
+            value
+        },
+        Err(_) => {
+            return Err(String::from("unable to serialize outputs"));
+        }
+    };
+    let res = client
+        .post(url)
+        .header("X-Access-Key", access_key)
+        .header("Content-Type", "application/json")
+        .body(data)
+        .send();
+    match res {
+        Ok(mut data) => match data.text() {
+            Ok(json_value) => match serde_json::from_str(json_value.as_str()) {
+                Ok(parsed_value) => {
+                    let value: Value = parsed_value;
+                    match value["data"]["new_outputs"].as_u64() {
+                        Some(num) => Ok(num),
+                        None => return Err(format!("malformed json returned"))
+                    }
+                },
+                Err(_) => Err(format!("invalid json returned")),
+            },
+            Err(_) => Err(String::from("unable to parse response text")),
+        },
+        Err(_) => Err(String::from("unable to connect"))
     }
 }
 
@@ -29,7 +70,7 @@ pub fn main(master_url: String, secret_key: String, threads: u8, queue_size: isi
     // Note that because any given instance will never last more than 24 hours
     // and access keys last 48 hours, re-establishing the connection is never
     // necessary.
-    let registration_url = format!("{}/api/register/{}", &master_url, &secret_key);
+    let registration_url = format!("{}/register/{}", &master_url, &secret_key);
     let registration_response = (match reqwest::get(registration_url.as_str()) {
         Ok(value) => value,
         Err(error) => {
@@ -39,6 +80,8 @@ pub fn main(master_url: String, secret_key: String, threads: u8, queue_size: isi
     })
     .text()
     .unwrap();
+    // Todo: proper error handling here
+
     let registration_data: Value = serde_json::from_str(registration_response.as_str()).unwrap();
 
     let access_key: String = registration_data["data"]["access_key"].to_string();
@@ -51,23 +94,31 @@ pub fn main(master_url: String, secret_key: String, threads: u8, queue_size: isi
     let s3_client = rusoto_s3::S3Client::new(rusoto_core::region::Region::UsEast1);
 
     // Get queries
-    let queries_url = format!("{}/queries", &master_url);
+    let queries_url = format!("{}/queries/", &master_url);
     let queries_response = match get_authenticated(access_key.as_str(), queries_url.as_str()) {
-        Some(value) => value,
-        None => {
-            error!("unable to get queries");
+        Ok(value) => value,
+        Err(issue) => {
+            error!("unable to get queries: {}", issue);
             std::process::exit(101);
         }
     };
 
-    let query_vec: Vec<Query> = Vec::new();
+    let mut query_vec: Vec<Query> = Vec::new();
 
-    let queries: QueryGroup = match ron::de::from_str("") {
-        Ok(value) => value,
-        Err(error) => {
-            error!("unable to deserialize queries: `{}`", error);
-            std::process::exit(101);
-        }
+    for query_val in queries_response["data"]["queries"].as_array().unwrap() {
+        let id = String::from(query_val["id"].as_str().unwrap());
+        let mut query: Query = match ron::de::from_str(query_val["ieql"].as_str().unwrap()) {
+            Ok(parsed_query) => parsed_query,
+            Err(_) => {
+                error!("unable to parse query; dying...");
+                std::process::exit(101);
+            }
+        };
+        query.id = Some(id);
+        query_vec.push(query);
+    }
+    let queries: QueryGroup = QueryGroup {
+        queries: query_vec
     };
     info!(
         "successfully loaded {} queries from master",
@@ -82,7 +133,7 @@ pub fn main(master_url: String, secret_key: String, threads: u8, queue_size: isi
             std::process::exit(101);
         }
     };
-    let scan_interface = compiled_queries.scan_concurrently(threads);
+    let scan_interface: AsyncScanInterface = compiled_queries.scan_concurrently(threads);
 
     // Analytics
     let mut documents_processed = 0u64;
@@ -95,23 +146,23 @@ pub fn main(master_url: String, secret_key: String, threads: u8, queue_size: isi
     // Stream and process an archive
     loop {
         // Stream loop
-        let data_url = format!("{}/data", &master_url);
-        let mut data_response: reqwest::Response = match reqwest::get(data_url.as_str()) {
-            Ok(value) => value,
+        let data_url = format!("{}/source/", &master_url);
+        let (url_to_stream, data_id) = match get_authenticated(access_key.as_str(), data_url.as_str()) {
+            Ok(value) => match (value["data"]["location"].as_str(), value["data"]["id"].as_str()) {
+                (Some(location), Some(id)) => (String::from(location), String::from(id)),
+                _ => {
+                    error!("data queue is empty; no work to be done!");
+                    std::process::exit(0);
+                } 
+            },
             Err(error) => {
                 error!("unable to get data location from master: `{}`", error);
                 std::process::exit(101);
             }
         };
-        if data_response.status().as_u16() == 204 {
-            info!("no more data left!");
-            info!("shutting down...");
-            break;
-        }
-        let url_to_stream = data_response.text().unwrap();
         info!("found data `{}` to process", url_to_stream);
         let request = rusoto_s3::GetObjectRequest {
-            bucket: String::from("commoncrawl"),
+            bucket: String::from("commoncrawl"), // TODO: make this configurable
             key: url_to_stream,
             ..Default::default()
         };
@@ -234,17 +285,11 @@ pub fn main(master_url: String, secret_key: String, threads: u8, queue_size: isi
                 let docs_per_second = documents_processed / time_elapsed;
 
                 if new_outputs > 0 {
-                    match client
-                        .post(format!("{}/output", &master_url).as_str())
-                        .body(ron::ser::to_string(&output_batch).unwrap())
-                        .send()
-                    {
-                        Ok(_) => (),
-                        Err(error) => warn!(
-                            "encountered error while pushing outputs to master: `{}`",
-                            error
-                        ),
-                    };
+                    let output_url = format!("{}/output/", master_url);
+                    match post_outputs(access_key.as_str(), output_url.as_str(), output_batch) {
+                        Ok(num) => info!("successfully sent {} outputs to master server", num),
+                        Err(issue) => error!("could not send outputs to master server: `{}`", issue)
+                    }
                 }
 
                 info!(
@@ -263,6 +308,13 @@ pub fn main(master_url: String, secret_key: String, threads: u8, queue_size: isi
             Err(_) => {
                 error!("unable to scan document batch!");
             }
+        }
+
+        // Mark source as completed
+        let completion_url = format!("{}/complete_source/{}", &master_url, &data_id);
+        match get_authenticated(access_key.as_str(), completion_url.as_str()) {
+            Ok(_) => info!("marked source id `{}` as completed", data_id),
+            Err(_) => error!("unable to mark source id `{}` as completed", data_id)
         }
     }
 }
