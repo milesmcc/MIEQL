@@ -11,12 +11,27 @@ use std::time::Duration;
 use std::time::SystemTime;
 use serde_json::{Value};
 
-fn get_authenticated(access_key: &str, url: &str) -> Result<Value, String> {
+enum RequestMethod {
+    Get,
+    Post
+}
+
+fn get_authenticated(access_key: &str, url: &str, method: RequestMethod) -> Result<Value, String> {
     let client = reqwest::Client::new();
-    let res = client
-        .get(url)
-        .header("X-Access-Key", access_key)
-        .send();
+    let res = match method {
+        RequestMethod::Get => {
+            client
+                .get(url)
+                .header("X-Access-Key", access_key)
+                .send()
+        },
+        RequestMethod::Post => {
+            client
+                .post(url)
+                .header("X-Access-Key", access_key)
+                .send()
+        }
+    };
     match res {
         Ok(mut data) => match data.text() {
             Ok(json_value) => match serde_json::from_str(json_value.as_str()) {
@@ -95,7 +110,7 @@ pub fn main(master_url: String, secret_key: String, threads: u8, queue_size: isi
 
     // Get queries
     let queries_url = format!("{}/queries/", &master_url);
-    let queries_response = match get_authenticated(access_key.as_str(), queries_url.as_str()) {
+    let queries_response = match get_authenticated(access_key.as_str(), queries_url.as_str(), RequestMethod::Get) {
         Ok(value) => value,
         Err(issue) => {
             error!("unable to get queries: {}", issue);
@@ -147,12 +162,13 @@ pub fn main(master_url: String, secret_key: String, threads: u8, queue_size: isi
     loop {
         // Stream loop
         let data_url = format!("{}/source/", &master_url);
-        let (url_to_stream, data_id) = match get_authenticated(access_key.as_str(), data_url.as_str()) {
+        let (url_to_stream, data_id) = match get_authenticated(access_key.as_str(), data_url.as_str(), RequestMethod::Get) {
             Ok(value) => match (value["data"]["location"].as_str(), value["data"]["id"].as_str()) {
                 (Some(location), Some(id)) => (String::from(location), String::from(id)),
                 _ => {
-                    error!("data queue is empty; no work to be done!");
-                    std::process::exit(0);
+                    error!("data queue is empty; sleeping for one minute and then trying again...");
+                    thread::sleep(Duration::from_millis(60000));
+                    continue;
                 } 
             },
             Err(error) => {
@@ -176,6 +192,7 @@ pub fn main(master_url: String, secret_key: String, threads: u8, queue_size: isi
                 continue;
             }
         };
+        
         let stream = (match result.body {
             Some(value) => value,
             None => {
@@ -312,7 +329,7 @@ pub fn main(master_url: String, secret_key: String, threads: u8, queue_size: isi
 
         // Mark source as completed
         let completion_url = format!("{}/complete_source/{}", &master_url, &data_id);
-        match get_authenticated(access_key.as_str(), completion_url.as_str()) {
+        match get_authenticated(access_key.as_str(), completion_url.as_str(), RequestMethod::Post) {
             Ok(_) => info!("marked source id `{}` as completed", data_id),
             Err(_) => error!("unable to mark source id `{}` as completed", data_id)
         }
