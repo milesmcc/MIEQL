@@ -1,13 +1,21 @@
-apiVersion: batch/v1
-kind: Job
+apiVersion: apps/v1
+kind: Deployment
 metadata:
-  name: scan
+  name: mieql-scanner
+  labels:
+    app: mieql
 spec:
+  selector:
+    matchLabels:
+      app: mieql
   template:
+    metadata:
+      labels:
+        app: mieql
     spec:
       containers:
       - name: client
-        image: gcr.io/optical-scan/github.com/milesmcc/mieql:5d44b97
+        image: gcr.io/optical-scan/github.com/milesmcc/mieql:160f9ed
         args:
         - '--threads=4'
         - '--queue=64'
@@ -26,5 +34,4 @@ spec:
               key: aws_access_key_id
         resources:
           requests:
-            cpu: 3750m
-      restartPolicy: OnFailure
+            cpu: 3500m
