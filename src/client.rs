@@ -153,7 +153,7 @@ pub fn main(master_url: String, secret_key: String, threads: u8, queue_size: isi
     // Analytics
     let mut documents_processed = 0u64;
     let mut total_outputs = 0;
-    let start_time = SystemTime::now();
+    let mut start_time = SystemTime::now();
 
     // Reqwest client
     let client = reqwest::Client::new();
@@ -166,9 +166,15 @@ pub fn main(master_url: String, secret_key: String, threads: u8, queue_size: isi
             Ok(value) => match (value["data"]["location"].as_str(), value["data"]["id"].as_str()) {
                 (Some(location), Some(id)) => (String::from(location), String::from(id)),
                 _ => {
-                    error!("data queue is empty; sleeping for one minute and then trying again...");
-                    thread::sleep(Duration::from_millis(60000));
-                    continue;
+                    error!("data queue is empty; sleeping for five minutes, refreshing authorization, and then trying again...");
+                    thread::sleep(Duration::from_millis(60000*5));
+                    let revoke_url = format!("{}/unregister/", &master_url);
+                    match get_authenticated(access_key.as_str(), revoke_url.as_str(), RequestMethod::Get) {
+                        Ok(_) => info!("successfully revoked authorization; will try again..."),
+                        Err(err) => error!("unable to revoke authorization: `{}`", err)
+                    }
+                    main(master_url, secret_key, threads, queue_size, update_interval);
+                    return;
                 } 
             },
             Err(error) => {
@@ -176,6 +182,12 @@ pub fn main(master_url: String, secret_key: String, threads: u8, queue_size: isi
                 std::process::exit(101);
             }
         };
+        
+        // Reset stats
+        start_time = SystemTime::now();
+        total_outputs = 0;
+        documents_processed = 0;
+
         info!("found data `{}` to process", url_to_stream);
         let request = rusoto_s3::GetObjectRequest {
             bucket: String::from("commoncrawl"), // TODO: make this configurable
