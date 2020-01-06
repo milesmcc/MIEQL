@@ -1,36 +1,26 @@
 use flate2::read::MultiGzDecoder;
 use ieql::common::compilation::CompilableTo;
 use ieql::output::output::OutputBatch;
-use ieql::query::query::{QueryGroup, Query};
+use ieql::query::query::{Query, QueryGroup};
 use ieql::scan::scanner::{AsyncScanInterface, Scanner};
 use rusoto_s3;
 use rusoto_s3::S3;
+use serde_json::Value;
 use std::io::Read;
 use std::thread;
 use std::time::Duration;
 use std::time::SystemTime;
-use serde_json::{Value};
 
 enum RequestMethod {
     Get,
-    Post
+    Post,
 }
 
 fn get_authenticated(access_key: &str, url: &str, method: RequestMethod) -> Result<Value, String> {
     let client = reqwest::Client::new();
     let res = match method {
-        RequestMethod::Get => {
-            client
-                .get(url)
-                .header("X-Access-Key", access_key)
-                .send()
-        },
-        RequestMethod::Post => {
-            client
-                .post(url)
-                .header("X-Access-Key", access_key)
-                .send()
-        }
+        RequestMethod::Get => client.get(url).header("X-Access-Key", access_key).send(),
+        RequestMethod::Post => client.post(url).header("X-Access-Key", access_key).send(),
     };
     match res {
         Ok(mut data) => match data.text() {
@@ -40,7 +30,7 @@ fn get_authenticated(access_key: &str, url: &str, method: RequestMethod) -> Resu
             },
             Err(_) => Err(String::from("unable to parse response text")),
         },
-        Err(_) => Err(String::from("unable to extract response text"))
+        Err(_) => Err(String::from("unable to extract response text")),
     }
 }
 
@@ -50,7 +40,7 @@ fn post_outputs(access_key: &str, url: &str, outputs: OutputBatch) -> Result<u64
         Ok(value) => {
             // println!("{}", value);
             value
-        },
+        }
         Err(_) => {
             return Err(String::from("unable to serialize outputs"));
         }
@@ -68,18 +58,24 @@ fn post_outputs(access_key: &str, url: &str, outputs: OutputBatch) -> Result<u64
                     let value: Value = parsed_value;
                     match value["data"]["new_outputs"].as_u64() {
                         Some(num) => Ok(num),
-                        None => return Err(format!("malformed json returned"))
+                        None => return Err(format!("malformed json returned")),
                     }
-                },
+                }
                 Err(_) => Err(format!("invalid json returned")),
             },
             Err(_) => Err(String::from("unable to parse response text")),
         },
-        Err(_) => Err(String::from("unable to connect"))
+        Err(_) => Err(String::from("unable to connect")),
     }
 }
 
-pub fn main(master_url: String, secret_key: String, threads: u8, queue_size: isize, update_interval: u64) {
+pub fn main(
+    master_url: String,
+    secret_key: String,
+    threads: u8,
+    queue_size: isize,
+    update_interval: u64,
+) {
     // Establish connection & get access key
     //
     // Note that because any given instance will never last more than 24 hours
@@ -95,7 +91,7 @@ pub fn main(master_url: String, secret_key: String, threads: u8, queue_size: isi
     })
     .text()
     .unwrap();
-    // Todo: proper error handling here
+    // TODO: proper error handling here
 
     let registration_data: Value = serde_json::from_str(registration_response.as_str()).unwrap();
 
@@ -110,7 +106,11 @@ pub fn main(master_url: String, secret_key: String, threads: u8, queue_size: isi
 
     // Get queries
     let queries_url = format!("{}/queries/", &master_url);
-    let queries_response = match get_authenticated(access_key.as_str(), queries_url.as_str(), RequestMethod::Get) {
+    let queries_response = match get_authenticated(
+        access_key.as_str(),
+        queries_url.as_str(),
+        RequestMethod::Get,
+    ) {
         Ok(value) => value,
         Err(issue) => {
             error!("unable to get queries: {}", issue);
@@ -122,6 +122,7 @@ pub fn main(master_url: String, secret_key: String, threads: u8, queue_size: isi
 
     for query_val in queries_response["data"]["queries"].as_array().unwrap() {
         let id = String::from(query_val["id"].as_str().unwrap());
+        println!("{}", id);
         let mut query: Query = match ron::de::from_str(query_val["ieql"].as_str().unwrap()) {
             Ok(parsed_query) => parsed_query,
             Err(_) => {
@@ -132,9 +133,7 @@ pub fn main(master_url: String, secret_key: String, threads: u8, queue_size: isi
         query.id = Some(id);
         query_vec.push(query);
     }
-    let queries: QueryGroup = QueryGroup {
-        queries: query_vec
-    };
+    let queries: QueryGroup = QueryGroup { queries: query_vec };
     info!(
         "successfully loaded {} queries from master",
         queries.queries.len()
@@ -162,27 +161,37 @@ pub fn main(master_url: String, secret_key: String, threads: u8, queue_size: isi
     loop {
         // Stream loop
         let data_url = format!("{}/source/", &master_url);
-        let (url_to_stream, data_id) = match get_authenticated(access_key.as_str(), data_url.as_str(), RequestMethod::Get) {
-            Ok(value) => match (value["data"]["location"].as_str(), value["data"]["id"].as_str()) {
+        let (url_to_stream, data_id) = match get_authenticated(
+            access_key.as_str(),
+            data_url.as_str(),
+            RequestMethod::Get,
+        ) {
+            Ok(value) => match (
+                value["data"]["location"].as_str(),
+                value["data"]["id"].as_str(),
+            ) {
                 (Some(location), Some(id)) => (String::from(location), String::from(id)),
                 _ => {
                     error!("data queue is empty; sleeping for five minutes, refreshing authorization, and then trying again...");
-                    thread::sleep(Duration::from_millis(60000*5));
+                    thread::sleep(Duration::from_millis(60000 * 5));
                     let revoke_url = format!("{}/unregister/", &master_url);
-                    match get_authenticated(access_key.as_str(), revoke_url.as_str(), RequestMethod::Get) {
+                    match get_authenticated(
+                        access_key.as_str(),
+                        revoke_url.as_str(),
+                        RequestMethod::Get,
+                    ) {
                         Ok(_) => info!("successfully revoked authorization; will try again..."),
-                        Err(err) => error!("unable to revoke authorization: `{}`", err)
+                        Err(err) => error!("unable to revoke authorization: `{}`", err),
                     }
                     main(master_url, secret_key, threads, queue_size, update_interval);
                     return;
-                } 
+                }
             },
             Err(error) => {
                 error!("unable to get data location from master: `{}`", error);
                 std::process::exit(101);
             }
         };
-        
         // Reset stats
         start_time = SystemTime::now();
         total_outputs = 0;
@@ -204,7 +213,6 @@ pub fn main(master_url: String, secret_key: String, threads: u8, queue_size: isi
                 continue;
             }
         };
-        
         let stream = (match result.body {
             Some(value) => value,
             None => {
@@ -317,7 +325,9 @@ pub fn main(master_url: String, secret_key: String, threads: u8, queue_size: isi
                     let output_url = format!("{}/output/", master_url);
                     match post_outputs(access_key.as_str(), output_url.as_str(), output_batch) {
                         Ok(num) => info!("successfully sent {} outputs to master server", num),
-                        Err(issue) => error!("could not send outputs to master server: `{}`", issue)
+                        Err(issue) => {
+                            error!("could not send outputs to master server: `{}`", issue)
+                        }
                     }
                 }
 
@@ -341,9 +351,13 @@ pub fn main(master_url: String, secret_key: String, threads: u8, queue_size: isi
 
         // Mark source as completed
         let completion_url = format!("{}/complete_source/{}", &master_url, &data_id);
-        match get_authenticated(access_key.as_str(), completion_url.as_str(), RequestMethod::Post) {
+        match get_authenticated(
+            access_key.as_str(),
+            completion_url.as_str(),
+            RequestMethod::Post,
+        ) {
             Ok(_) => info!("marked source id `{}` as completed", data_id),
-            Err(_) => error!("unable to mark source id `{}` as completed", data_id)
+            Err(_) => error!("unable to mark source id `{}` as completed", data_id),
         }
     }
 }

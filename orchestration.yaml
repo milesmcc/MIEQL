@@ -15,7 +15,7 @@ spec:
     spec:
       containers:
       - name: client
-        image: gcr.io/optical-scan/github.com/milesmcc/mieql:adaa990
+        image: gcr.io/optical-scan/github.com/milesmcc/mieql:ea4c5e8
         args:
         - '--threads=4'
         - '--queue=64'
