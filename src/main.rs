@@ -15,6 +15,7 @@ extern crate httparse;
 extern crate env_logger;
 extern crate sys_info;
 extern crate serde_json;
+extern crate itertools;
 
 use clap::{App};
 
