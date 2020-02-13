@@ -1,16 +1,29 @@
 use flate2::read::MultiGzDecoder;
 use ieql::common::compilation::CompilableTo;
 use ieql::output::output::OutputBatch;
-use ieql::query::query::{Query, QueryGroup};
+use ieql::query::query::{CompiledQueryGroup, Query, QueryGroup};
 use ieql::scan::scanner::{AsyncScanInterface, Scanner};
+use ieql::ScopeContent;
+use itertools::Itertools;
 use rusoto_s3;
 use rusoto_s3::S3;
 use serde_json::Value;
+use std::collections::HashMap;
 use std::io::Read;
 use std::thread;
 use std::time::Duration;
 use std::time::SystemTime;
-use itertools::Itertools;
+
+const DOCUMENT_BATCH_SIZE: usize = 64;
+
+fn max_queue_size(scan_interfaces: &Vec<AsyncScanInterface>) -> isize {
+    scan_interfaces
+        .iter()
+        .map(|x| x.batches_pending_processing())
+        .collect::<Vec<isize>>()
+        .into_iter()
+        .fold(0, |acc, b| acc.max(b))
+}
 
 enum RequestMethod {
     Get,
@@ -95,7 +108,8 @@ pub fn main(
         .unwrap();
         // TODO: proper error handling here
 
-        let registration_data: Value = serde_json::from_str(registration_response.as_str()).unwrap();
+        let registration_data: Value =
+            serde_json::from_str(registration_response.as_str()).unwrap();
 
         let access_key: String = registration_data["data"]["access_key"].to_string();
 
@@ -106,56 +120,80 @@ pub fn main(
         // Create dataset client
         let s3_client = rusoto_s3::S3Client::new(rusoto_core::region::Region::UsEast1);
 
-        // Get queries
-        let queries_url = format!("{}/queries/", &master_url);
-        let queries_response = match get_authenticated(
-            access_key.as_str(),
-            queries_url.as_str(),
-            RequestMethod::Get,
-        ) {
-            Ok(value) => value,
-            Err(issue) => {
-                error!("unable to get queries: {}", issue);
-                std::process::exit(101);
-            }
-        };
-
-        let mut query_vec: Vec<Query> = Vec::new();
-
-        for query_val in queries_response["data"]["queries"].as_array().unwrap() {
-            let id = String::from(query_val["id"].as_str().unwrap());
-            let mut query: Query = match ron::de::from_str(query_val["ieql"].as_str().unwrap()) {
-                Ok(parsed_query) => parsed_query,
-                Err(_) => {
-                    error!("unable to parse query; dying...");
-                    std::process::exit(101);
-                }
-            };
-            query.id = Some(id);
-            query_vec.push(query);
-        }
-        let queries: QueryGroup = QueryGroup { queries: query_vec };
-        info!(
-            "successfully loaded {} queries from master",
-            queries.queries.len()
-        );
-
-        // Create scan engine
-        let compiled_queries = match queries.compile() {
-            Ok(value) => value,
-            Err(error) => {
-                error!("unable to compile queries: {}", error);
-                std::process::exit(101);
-            }
-        };
-        let scan_interface: AsyncScanInterface = compiled_queries.scan_concurrently(threads);
-
-        // Reqwest client
-        let client = reqwest::Client::new();
-
         // Stream and process an archive
         'stream: loop {
             // Stream loop
+
+            // Get queries
+            let queries_url = format!("{}/queries/", &master_url);
+            let queries_response = match get_authenticated(
+                access_key.as_str(),
+                queries_url.as_str(),
+                RequestMethod::Get,
+            ) {
+                Ok(value) => value,
+                Err(issue) => {
+                    error!("unable to get queries: {}", issue);
+                    std::process::exit(101);
+                }
+            };
+
+            let mut query_vec: Vec<Query> = Vec::new();
+
+            for query_val in queries_response["data"]["queries"].as_array().unwrap() {
+                let id = String::from(query_val["id"].as_str().unwrap());
+                let mut query: Query = match ron::de::from_str(query_val["ieql"].as_str().unwrap())
+                {
+                    Ok(parsed_query) => parsed_query,
+                    Err(_) => {
+                        error!("unable to parse query; dying...");
+                        std::process::exit(101);
+                    }
+                };
+                query.id = Some(id);
+                query_vec.push(query);
+            }
+
+            let mut query_groups: HashMap<ScopeContent, QueryGroup> = HashMap::new();
+
+            info!(
+                "successfully loaded {} queries from master",
+                query_vec.len()
+            );
+
+            for query in query_vec {
+                match query_groups.get_mut(&query.scope.content) {
+                    Some(query_group) => {
+                        query_group.queries.push(query);
+                    }
+                    None => {
+                        query_groups.insert(
+                            query.scope.content,
+                            QueryGroup {
+                                optimized_content: query.scope.content,
+                                queries: vec![query],
+                            },
+                        );
+                    }
+                }
+            }
+
+            let compiled_query_groups: Vec<CompiledQueryGroup> = query_groups
+                .values()
+                .map(|query_group| match query_group.compile() {
+                    Ok(value) => value,
+                    Err(error) => {
+                        error!("unable to compile queries: {}", error);
+                        std::process::exit(101);
+                    }
+                })
+                .collect();
+
+            // Create scan engines
+            let mut scan_interfaces: Vec<AsyncScanInterface> = compiled_query_groups
+                .into_iter()
+                .map(|group| group.scan_concurrently(threads))
+                .collect();
             let data_url = format!("{}/source/", &master_url);
             let (url_to_stream, data_id) = match get_authenticated(
                 access_key.as_str(),
@@ -221,9 +259,10 @@ pub fn main(
             let crlf = [13, 10, 13, 10]; // carraige return, line feed
             let mut current_document_batch: Vec<ieql::Document> = Vec::new();
             loop {
-                // Check if queue size is too big
-                let mut currently_processing = scan_interface.batches_pending_processing();
                 let mut instances = 1;
+
+                // Check if any queue size is too big
+                let mut currently_processing = max_queue_size(&scan_interfaces);
                 while queue_size <= currently_processing {
                     warn!(
                         "maximum queue sized reached ({} >= {}); sleeping for 1s... (#{})",
@@ -231,7 +270,7 @@ pub fn main(
                     );
                     instances += 1;
                     thread::sleep(Duration::from_millis(1000));
-                    currently_processing = scan_interface.batches_pending_processing();
+                    currently_processing = max_queue_size(&scan_interfaces);
                 }
 
                 // On-the-fly gzip decode loop
@@ -288,11 +327,15 @@ pub fn main(
                 // Send for scanning
                 debug!("processing asynchronously: {:?}", document.url);
                 current_document_batch.push(document);
-                if current_document_batch.len() >= 64 {
-                    match scan_interface.process(docs_to_doc_reference(current_document_batch)) {
-                        Ok(_) => (),
-                        Err(_) => {
-                            error!("unable to scan document batch!");
+                if current_document_batch.len() >= DOCUMENT_BATCH_SIZE {
+                    for scan_interface in &scan_interfaces {
+                        match scan_interface
+                            .process(docs_to_doc_reference(current_document_batch.to_vec()))
+                        {
+                            Ok(_) => (),
+                            Err(_) => {
+                                error!("unable to scan document batch!");
+                            }
                         }
                     }
                     current_document_batch = Vec::new();
@@ -303,8 +346,10 @@ pub fn main(
                     let mut output_batch = OutputBatch {
                         outputs: Vec::new(),
                     };
-                    for output in scan_interface.outputs() {
-                        output_batch.merge_with(output);
+                    for scan_interface in &mut scan_interfaces {
+                        for output in scan_interface.outputs() {
+                            output_batch.merge_with(output);
+                        }
                     }
                     let new_outputs = output_batch.outputs.len();
                     total_outputs = old_outputs + new_outputs;
@@ -328,8 +373,8 @@ pub fn main(
                     }
 
                     info!(
-                        "[{} queued] [{} docs/second] [{} processed] [{} outputs, Δ{}]",
-                        scan_interface.batches_pending_processing(),
+                        "[{:?} docs queued] [{} docs/second] [{} processed] [{} outputs, Δ{}]",
+                        &scan_interfaces.iter().map(|x| (DOCUMENT_BATCH_SIZE as isize) * x.batches_pending_processing()).collect::<Vec<isize>>(),
                         docs_per_second,
                         documents_processed,
                         total_outputs,
@@ -338,10 +383,13 @@ pub fn main(
                 }
             }
             // Send remaining documents
-            match scan_interface.process(docs_to_doc_reference(current_document_batch)) {
-                Ok(_) => (),
-                Err(_) => {
-                    error!("unable to scan document batch!");
+            for scan_interface in &scan_interfaces {
+                match scan_interface.process(docs_to_doc_reference(current_document_batch.to_vec()))
+                {
+                    Ok(_) => (),
+                    Err(_) => {
+                        error!("unable to scan document batch!");
+                    }
                 }
             }
 
