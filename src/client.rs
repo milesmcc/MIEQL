@@ -423,6 +423,7 @@ pub fn main(
 
             info!("cleaning up...");
             thread::sleep(Duration::from_millis(5000));
+            push_new_outputs(&access_key, &output_url, &mut scan_interfaces);
 
             // Mark source as completed
             let completion_url = format!("{}/complete_source/{}", &master_url, &data_id);
