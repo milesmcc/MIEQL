@@ -25,6 +25,32 @@ fn max_queue_size(scan_interfaces: &Vec<AsyncScanInterface>) -> isize {
         .fold(0, |acc, b| acc.max(b))
 }
 
+fn push_new_outputs(
+    access_key: &String,
+    output_url: &String,
+    scan_interfaces: &mut Vec<AsyncScanInterface>,
+) -> usize {
+    let mut output_batch = OutputBatch {
+        outputs: Vec::new(),
+    };
+    for scan_interface in scan_interfaces {
+        for output in scan_interface.outputs() {
+            output_batch.merge_with(output);
+        }
+    }
+
+    let total_outputs = output_batch.outputs.len();
+
+    if output_batch.outputs.len() > 0 {
+        match post_outputs(access_key.as_str(), output_url.as_str(), output_batch) {
+            Ok(num) => info!("successfully sent {} outputs to master server", num),
+            Err(issue) => error!("could not send outputs to master server: `{}`", issue),
+        };
+    }
+
+    return total_outputs;
+}
+
 enum RequestMethod {
     Get,
     Post,
@@ -108,6 +134,8 @@ pub fn main(
         .unwrap();
         // TODO: proper error handling here
 
+        let output_url = format!("{}/output/", master_url);
+
         let registration_data: Value =
             serde_json::from_str(registration_response.as_str()).unwrap();
 
@@ -121,7 +149,7 @@ pub fn main(
         let s3_client = rusoto_s3::S3Client::new(rusoto_core::region::Region::UsEast1);
 
         // Stream and process an archive
-        'stream: loop {
+        loop {
             // Stream loop
 
             // Get queries
@@ -190,9 +218,10 @@ pub fn main(
                 .collect();
 
             // Create scan engines
+            let threads_per_group: u8 = threads / (compiled_query_groups.len() as u8);
             let mut scan_interfaces: Vec<AsyncScanInterface> = compiled_query_groups
                 .into_iter()
-                .map(|group| group.scan_concurrently(threads))
+                .map(|group| group.scan_concurrently(threads_per_group))
                 .collect();
             let data_url = format!("{}/source/", &master_url);
             let (url_to_stream, data_id) = match get_authenticated(
@@ -228,7 +257,7 @@ pub fn main(
             // Reset stats
             let mut documents_processed = 0u64;
             let mut total_outputs = 0;
-            let mut start_time = SystemTime::now();
+            let start_time = SystemTime::now();
 
             info!("found data `{}` to process", url_to_stream);
             let paths: Vec<&str> = url_to_stream.split("/").collect();
@@ -265,11 +294,11 @@ pub fn main(
                 let mut currently_processing = max_queue_size(&scan_interfaces);
                 while queue_size <= currently_processing {
                     warn!(
-                        "maximum queue sized reached ({} >= {}); sleeping for 1s... (#{})",
+                        "maximum queue sized reached ({} >= {}); sleeping for 5s... (#{})",
                         currently_processing, queue_size, instances
                     );
                     instances += 1;
-                    thread::sleep(Duration::from_millis(1000));
+                    thread::sleep(Duration::from_millis(5000));
                     currently_processing = max_queue_size(&scan_interfaces);
                 }
 
@@ -325,7 +354,6 @@ pub fn main(
                 documents_processed += 1;
 
                 // Send for scanning
-                debug!("processing asynchronously: {:?}", document.url);
                 current_document_batch.push(document);
                 if current_document_batch.len() >= DOCUMENT_BATCH_SIZE {
                     for scan_interface in &scan_interfaces {
@@ -343,15 +371,11 @@ pub fn main(
 
                 if documents_processed % update_interval == 0 {
                     let old_outputs = total_outputs;
-                    let mut output_batch = OutputBatch {
-                        outputs: Vec::new(),
-                    };
-                    for scan_interface in &mut scan_interfaces {
-                        for output in scan_interface.outputs() {
-                            output_batch.merge_with(output);
-                        }
-                    }
-                    let new_outputs = output_batch.outputs.len();
+                    let new_outputs =
+                        push_new_outputs(&access_key, &output_url, &mut scan_interfaces);
+                    let documents_queued = max_queue_size(&scan_interfaces) * DOCUMENT_BATCH_SIZE as isize;
+                    let documents_completed = documents_processed
+                        - documents_queued as u64;
                     total_outputs = old_outputs + new_outputs;
                     let mut time_elapsed = SystemTime::now()
                         .duration_since(start_time)
@@ -360,23 +384,12 @@ pub fn main(
                     if time_elapsed == 0 {
                         time_elapsed += 1; // for now...
                     }
-                    let docs_per_second = documents_processed / time_elapsed;
-
-                    if new_outputs > 0 {
-                        let output_url = format!("{}/output/", master_url);
-                        match post_outputs(access_key.as_str(), output_url.as_str(), output_batch) {
-                            Ok(num) => info!("successfully sent {} outputs to master server", num),
-                            Err(issue) => {
-                                error!("could not send outputs to master server: `{}`", issue)
-                            }
-                        }
-                    }
-
+                    let docs_per_second = documents_completed / time_elapsed;
                     info!(
-                        "[{:?} docs queued] [{} docs/second] [{} processed] [{} outputs, Δ{}]",
-                        &scan_interfaces.iter().map(|x| (DOCUMENT_BATCH_SIZE as isize) * x.batches_pending_processing()).collect::<Vec<isize>>(),
+                        "[{} docs queued] [{} docs/second] [{} docs done] [{} outputs, Δ{}]",
+                        documents_queued,
                         docs_per_second,
-                        documents_processed,
+                        documents_completed,
                         total_outputs,
                         new_outputs
                     );
@@ -392,6 +405,24 @@ pub fn main(
                     }
                 }
             }
+
+            info!("finished archive; waiting for final documents to be processed...");
+            let mut waiting = 0;
+            while max_queue_size(&scan_interfaces) > 0 {
+                if waiting >= 5 {
+                    info!("graceful cleanup is taking too long, forcing end...");
+                    break;
+                }
+                info!(
+                    "{} items left in queue; waiting...",
+                    max_queue_size(&scan_interfaces)
+                );
+                waiting += 1;
+                thread::sleep(Duration::from_millis(1000));
+            }
+
+            info!("cleaning up...");
+            thread::sleep(Duration::from_millis(5000));
 
             // Mark source as completed
             let completion_url = format!("{}/complete_source/{}", &master_url, &data_id);
