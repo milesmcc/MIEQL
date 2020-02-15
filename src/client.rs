@@ -409,7 +409,7 @@ pub fn main(
             info!("finished archive; waiting for final documents to be processed...");
             let mut waiting = 0;
             while max_queue_size(&scan_interfaces) > 0 {
-                if waiting >= 5 {
+                if waiting >= 300 {
                     info!("graceful cleanup is taking too long, forcing end...");
                     break;
                 }
